@@ -6,3 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+tokio = { version = "1.35.1", features = ["sync", "rt", "rt-multi-thread", "macros", "signal", "time"] }
+tokio-tungstenite = { version = "0.21.0" , features = ["native-tls"]}
+futures-util = { version = "0.3.30", features = ["sink"] }
+uuid = { version = "1.6.1", features = ["v4"] }
+env_logger = "0.10.1"
+log = "0.4.20"
+time = "0.3.31"

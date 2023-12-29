@@ -67,6 +67,7 @@ pub async fn websocket_manager(base_url: &str, endpoints: Vec<&str>, mut global_
             }
         });
 
+        let broadcaster_clone = broadcaster.clone();
         spawn(broadcast_task(identified_read, broadcaster.clone()));
 
         // Access the is_connected from the map when needed
@@ -74,10 +75,11 @@ pub async fn websocket_manager(base_url: &str, endpoints: Vec<&str>, mut global_
         spawn(write_task(ws_write, receiver, is_connected_clone));
     }
 
-    // Task to handle messages from the global sender
+    // Clone the connections Arc to use in the global sender handler
+    let connections_clone = connections.clone();
     spawn(async move {
         info!("Global sender handler started.");
-        let conns = connections.lock().await;
+        let conns = connections_clone.lock().await;
         while let Some(message) = global_sender.recv().await {
             debug!("Handling message for connection_id: {}", message.connection_id);
             if let Some(connection_info) = conns.get(&message.connection_id) {
@@ -95,24 +97,33 @@ pub async fn websocket_manager(base_url: &str, endpoints: Vec<&str>, mut global_
         }
     });
 
-// Define a shared Notify instance for shutdown signals
-    let shutdown_notify = Arc::new(Notify::new());
+// Loop to monitor the `is_connected` flag of each connection
+    loop {
+        let mut all_connected = true;
+        {
+            let conns = connections.lock().await;
+            for (_, info) in conns.iter() {
+                if !info.is_connected.load(Ordering::SeqCst) {
+                    all_connected = false;
+                    break;
+                }
+            }
+        }
 
-    // Spawn a task to listen for a shutdown signal (e.g., CTRL+C)
-    // In a real application, replace this with your actual shutdown logic.
-    let shutdown_notify_clone = shutdown_notify.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.expect("Failed to listen for CTRL+C");
-        shutdown_notify_clone.notify_one();
-    });
+        // If any connection is not active, break the loop
+        if !all_connected {
+            break;
+        }
 
-    // Wait here until a shutdown is signaled
-    shutdown_notify.notified().await;
+        // Sleep for a short duration before checking again
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
 
     // Perform any necessary cleanup here
-    info!("Cleaning up before websocket_manager exits.");
+    info!("At least one connection is no longer active. Cleaning up before websocket_manager exits.");
     // E.g., gracefully close connections, notify spawned tasks to terminate, etc.
 }
+
 async fn ws_connection_manager(uri: &str) -> Result<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, String> {
     debug!("Connecting to WebSocket: {}", uri);
     // Attempt to connect and convert any errors into a String

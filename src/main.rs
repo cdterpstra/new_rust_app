@@ -2,9 +2,11 @@
 
 mod websocket_manager; // Import the module containing websocket_manager
 mod write_task;
-mod connect_to_websocket;
 mod broadcast_task;
 mod common;
+mod subscription_manager;
+mod authentication;
+mod ping_manager;
 
 use crate::websocket_manager::{websocket_manager};
 use tokio::sync::mpsc::channel;

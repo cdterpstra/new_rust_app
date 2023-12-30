@@ -1,14 +1,15 @@
 use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
 use std::collections::HashMap;
-use tokio::sync::{mpsc::{Receiver, Sender, channel}, broadcast::Sender as Broadcaster, Mutex};
+use tokio::sync::{mpsc::{Receiver, Sender, channel}, broadcast::Sender as Broadcaster, RwLock};
 use tokio::{spawn, time::Duration};
 use futures_util::StreamExt;
-use log::{debug, info, warn};
+use log::{debug, info, warn, error};
 use rand::Rng;
 use crate::broadcast_task::broadcast_task;
 use crate::write_task::write_task;
 use tokio_tungstenite::{connect_async, WebSocketStream, MaybeTlsStream};
 use tokio::net::TcpStream;
+
 
 pub struct ConnectionStates {
     pub(crate) public_spot: AtomicU32,
@@ -18,8 +19,30 @@ pub struct ConnectionStates {
     pub(crate) private: AtomicU32,
 }
 
+// Struct to hold both message and its associated connection ID
+pub struct ConnectionMessage {
+    connection_id: u32,
+    message: String,
+}
+
+// New struct representing a connection with its own lock
+pub struct Connection {
+    sender: Sender<String>,
+}
+
+impl Connection {
+    pub fn new(sender: Sender<String>) -> Self {
+        Connection {
+            sender,
+        }
+    }
+}
+
+
+
 impl ConnectionStates {
     pub fn new() -> Self {
+        debug!("Initializing new connection states");
         ConnectionStates {
             public_spot: AtomicU32::new(0),
             public_linear: AtomicU32::new(0),
@@ -30,17 +53,19 @@ impl ConnectionStates {
     }
 
     pub fn update_state(&self, endpoint: &str, value: u32) {
+        debug!("Updating state for endpoint: {}, value: {}", endpoint, value);
         match endpoint {
             "public/spot" => self.public_spot.store(value, Ordering::SeqCst),
             "public/linear" => self.public_linear.store(value, Ordering::SeqCst),
             "public/inverse" => self.public_inverse.store(value, Ordering::SeqCst),
             "public/option" => self.public_option.store(value, Ordering::SeqCst),
             "private" => self.private.store(value, Ordering::SeqCst),
-            _ => {}
+            _ => warn!("Attempted to update state for unknown endpoint: {}", endpoint),
         }
     }
 
     pub fn reset_state(&self, endpoint: &str) {
+        debug!("Resetting state for endpoint: {}", endpoint);
         self.update_state(endpoint, 0);
     }
 }
@@ -48,11 +73,11 @@ impl ConnectionStates {
 pub async fn websocket_manager(
     base_url: &str,
     endpoints: Vec<&str>,
-    mut global_sender: Receiver<String>,
+    mut global_sender: Receiver<ConnectionMessage>,
     broadcaster: Broadcaster<String>,
 ) {
     let connection_states = Arc::new(ConnectionStates::new());
-    let connection_map = Arc::new(Mutex::new(HashMap::<u32, Sender<String>>::new()));
+    let connection_map = Arc::new(RwLock::new(HashMap::<u32, Connection>::new()));
     info!("WebSocket Manager started.");
 
     for endpoint in endpoints.iter() {
@@ -66,9 +91,12 @@ pub async fn websocket_manager(
         let (sender, receiver) = channel::<String>(32);
 
         {
-            let mut conn_map = connection_map.lock().await;
-            conn_map.insert(connection_id, sender);
+            // Acquire write lock for modifying the map
+            let mut conn_map = connection_map.write().await;
+            debug!("Inserting new connection into map: {}", connection_id);
+            conn_map.insert(connection_id, Connection::new(sender));
         }
+
 
         let ws_stream = match ws_connection_manager(&uri).await {
             Ok(stream) => {
@@ -88,9 +116,12 @@ pub async fn websocket_manager(
 
         let identified_read = ws_read.map(move |message_result| {
             match message_result {
-                Ok(message) => format!("{}: {}", connection_id_clone, message.into_text().unwrap_or_else(|_| "Error in message conversion".to_string())),
+                Ok(message) => {
+                    debug!("Message received on WebSocket {}: {}", connection_id_clone, message);
+                    format!("{}: {}", connection_id_clone, message.into_text().unwrap_or_else(|_| "Error in message conversion".to_string()))
+                },
                 Err(e) => {
-                    warn!("WebSocket read error: {:?}", e);
+                    warn!("WebSocket read error on {}: {:?}", connection_id_clone, e);
                     format!("{}: Error", connection_id_clone)
                 }
             }
@@ -102,15 +133,15 @@ pub async fn websocket_manager(
 
     spawn(async move {
         info!("Global sender handler started.");
-        while let Some(message) = global_sender.recv().await {
-            if let Some((connection_id_str, actual_message)) = message.split_once(':') {
-                if let Ok(connection_id) = connection_id_str.parse::<u32>() {
-                    let conn_map = connection_map.lock().await;
-                    if let Some(sender) = conn_map.get(&connection_id) {
-                        let _ = sender.send(actual_message.to_string()).await;
-                        // Handle send error or success as needed
-                    }
+        while let Some(ConnectionMessage { connection_id, message }) = global_sender.recv().await {
+            let conn_map = connection_map.read().await;
+            if let Some(connection) = conn_map.get(&connection_id) {
+                match connection.sender.send(message).await {
+                    Ok(_) => debug!("Message sent to connection {}", connection_id),
+                    Err(e) => error!("Failed to send message to connection {}: {}", connection_id, e),
                 }
+            } else {
+                warn!("No connection found for ID: {}", connection_id);
             }
         }
     });
@@ -125,10 +156,12 @@ pub async fn websocket_manager(
         };
 
         if !all_connected {
-            break; // Exit loop if any connection is not active
+            info!("Not all connections are active. Exiting monitoring loop.");
+            break;
         }
 
-        tokio::time::sleep(Duration::from_secs(5)).await; // Sleep before checking again
+        debug!("All connections are active. Continuing to monitor.");
+        tokio::time::sleep(Duration::from_secs(5)).await;
     }
 
     info!("At least one connection is no longer active. Cleaning up before websocket_manager exits.");

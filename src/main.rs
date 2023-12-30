@@ -1,19 +1,15 @@
 // main.rs
 
 mod websocket_manager; // Import the module containing websocket_manager
-mod types;
 mod write_task;
 mod connect_to_websocket;
 mod broadcast_task;
 
-
 use crate::websocket_manager::websocket_manager;
 use tokio::sync::mpsc::channel;
 use tokio::sync::broadcast;
-use crate::types::MessageWithWSID; // Ensure this is defined or imported properly
 use log::debug; // Import the debug! macro
 use tokio::signal; // Import signal handling
-
 
 #[tokio::main]
 async fn main() {
@@ -34,8 +30,8 @@ async fn main() {
     debug!("Base URL and endpoints defined: {}", base_url); // Log the base URL
 
     // Set up communication channels
-    let (global_sender, global_receiver) = channel::<MessageWithWSID>(100); // Adjust size as needed
-    let (broadcaster, _) = broadcast::channel::<MessageWithWSID>(100); // Adjust size as needed
+    let (global_sender, global_receiver) = channel::<String>(100); // Adjust size as needed
+    let (broadcaster, _) = broadcast::channel::<String>(100); // Adjust size as needed
 
     debug!("Communication channels set up"); // Log the setup of communication channels
 

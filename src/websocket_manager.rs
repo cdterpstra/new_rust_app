@@ -1,9 +1,8 @@
-use tokio::sync::{mpsc::{Receiver, Sender, channel}, broadcast::Sender as Broadcaster, Mutex};
-use tokio::spawn;
-use tokio::time::Duration;
-use futures_util::StreamExt;
 use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
 use std::collections::HashMap;
+use tokio::sync::{mpsc::{Receiver, Sender, channel}, broadcast::Sender as Broadcaster, Mutex};
+use tokio::{spawn, time::Duration};
+use futures_util::StreamExt;
 use log::{debug, info, warn};
 use rand::Rng;
 use crate::broadcast_task::broadcast_task;
@@ -53,6 +52,7 @@ pub async fn websocket_manager(
     broadcaster: Broadcaster<String>,
 ) {
     let connection_states = Arc::new(ConnectionStates::new());
+    let connection_map = Arc::new(Mutex::new(HashMap::<u32, Sender<String>>::new()));
     info!("WebSocket Manager started.");
 
     for endpoint in endpoints.iter() {
@@ -61,9 +61,14 @@ pub async fn websocket_manager(
 
         let random_number: u32 = rand::thread_rng().gen_range(0..2_147_483_647);
         connection_states.update_state(endpoint, random_number);
-        let connection_id = random_number.to_string(); // Using random number as connection ID
+        let connection_id = random_number; // Using random number as connection ID
 
         let (sender, receiver) = channel::<String>(32);
+
+        {
+            let mut conn_map = connection_map.lock().await;
+            conn_map.insert(connection_id, sender);
+        }
 
         let ws_stream = match ws_connection_manager(&uri).await {
             Ok(stream) => {
@@ -78,9 +83,8 @@ pub async fn websocket_manager(
 
         let (ws_write, ws_read) = ws_stream.split();
 
-
         let broadcaster_clone = broadcaster.clone();
-        let connection_id_clone = connection_id.clone();
+        let connection_id_clone = connection_id.to_string();
 
         let identified_read = ws_read.map(move |message_result| {
             match message_result {
@@ -96,18 +100,23 @@ pub async fn websocket_manager(
         spawn(write_task(ws_write, receiver));
     }
 
-    let connections_clone = Arc::new(Mutex::new(HashMap::<u32, Sender<String>>::new()));
     spawn(async move {
         info!("Global sender handler started.");
         while let Some(message) = global_sender.recv().await {
-            // The logic to handle the message would go here
+            if let Some((connection_id_str, actual_message)) = message.split_once(':') {
+                if let Ok(connection_id) = connection_id_str.parse::<u32>() {
+                    let conn_map = connection_map.lock().await;
+                    if let Some(sender) = conn_map.get(&connection_id) {
+                        let _ = sender.send(actual_message.to_string()).await;
+                        // Handle send error or success as needed
+                    }
+                }
+            }
         }
     });
 
-    // Monitoring loop for connection states
     loop {
         let all_connected = {
-            // Check each atomic integer individually
             connection_states.public_spot.load(Ordering::SeqCst) != 0 &&
                 connection_states.public_linear.load(Ordering::SeqCst) != 0 &&
                 connection_states.public_inverse.load(Ordering::SeqCst) != 0 &&

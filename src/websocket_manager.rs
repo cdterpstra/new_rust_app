@@ -1,14 +1,15 @@
 use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
 use std::collections::HashMap;
-use tokio::sync::{mpsc::{Receiver, Sender, channel}, broadcast::Sender as Broadcaster, RwLock};
+use tokio::sync::{mpsc::{Receiver, Sender, channel}, broadcast::Sender as Broadcaster, RwLock, Mutex};
 use tokio::{spawn, time::Duration};
 use futures_util::StreamExt;
 use log::{debug, info, warn, error};
 use rand::Rng;
-use crate::broadcast_task::broadcast_task;
-use crate::write_task::write_task;
 use tokio_tungstenite::{connect_async, WebSocketStream, MaybeTlsStream};
 use tokio::net::TcpStream;
+use crate::broadcast_task::broadcast_task;
+use crate::common::ConnectionMessage;
+use crate::write_task::write_task;
 
 
 pub struct ConnectionStates {
@@ -19,13 +20,6 @@ pub struct ConnectionStates {
     pub(crate) private: AtomicU32,
 }
 
-// Struct to hold both message and its associated connection ID
-pub struct ConnectionMessage {
-    connection_id: u32,
-    message: String,
-}
-
-// New struct representing a connection with its own lock
 pub struct Connection {
     sender: Sender<String>,
 }
@@ -37,8 +31,6 @@ impl Connection {
         }
     }
 }
-
-
 
 impl ConnectionStates {
     pub fn new() -> Self {
@@ -78,7 +70,28 @@ pub async fn websocket_manager(
 ) {
     let connection_states = Arc::new(ConnectionStates::new());
     let connection_map = Arc::new(RwLock::new(HashMap::<u32, Connection>::new()));
-    info!("WebSocket Manager started.");
+    let work_sender = channel::<ConnectionMessage>(100).0; // Worker channel sender
+    let work_receiver = channel::<ConnectionMessage>(100).1; // Worker channel receiver
+    let work_receiver = Arc::new(Mutex::new(work_receiver)); // Wrap receiver in Arc<Mutex> for shared access
+
+    let worker_count = 4; // Define the number of workers in the pool
+    for _ in 0..worker_count {
+        let work_receiver = Arc::clone(&work_receiver); // Clone the Arc for each worker
+        let connection_map = Arc::clone(&connection_map); // Clone the Arc for each worker
+
+        spawn(async move {
+            while let Some(work_item) = work_receiver.lock().await.recv().await {
+                // Process each work item
+                if let Some(connection) = connection_map.read().await.get(&work_item.connection_id) {
+                    if let Err(e) = connection.sender.send(work_item.message).await {
+                        error!("Failed to send message to connection {}: {}", work_item.connection_id, e);
+                    }
+                } else {
+                    warn!("No connection found for ID: {}", work_item.connection_id);
+                }
+            }
+        });
+    }
 
     for endpoint in endpoints.iter() {
         let uri = format!("{}{}", base_url, endpoint);
@@ -86,17 +99,14 @@ pub async fn websocket_manager(
 
         let random_number: u32 = rand::thread_rng().gen_range(0..2_147_483_647);
         connection_states.update_state(endpoint, random_number);
-        let connection_id = random_number; // Using random number as connection ID
+        let connection_id = random_number;
 
         let (sender, receiver) = channel::<String>(32);
-
         {
-            // Acquire write lock for modifying the map
             let mut conn_map = connection_map.write().await;
             debug!("Inserting new connection into map: {}", connection_id);
             conn_map.insert(connection_id, Connection::new(sender));
         }
-
 
         let ws_stream = match ws_connection_manager(&uri).await {
             Ok(stream) => {
@@ -110,38 +120,25 @@ pub async fn websocket_manager(
         };
 
         let (ws_write, ws_read) = ws_stream.split();
-
         let broadcaster_clone = broadcaster.clone();
-        let connection_id_clone = connection_id.to_string();
+        let connection_id_clone = connection_id;
 
-        let identified_read = ws_read.map(move |message_result| {
-            match message_result {
-                Ok(message) => {
-                    debug!("Message received on WebSocket {}: {}", connection_id_clone, message);
-                    format!("{}: {}", connection_id_clone, message.into_text().unwrap_or_else(|_| "Error in message conversion".to_string()))
-                },
-                Err(e) => {
-                    warn!("WebSocket read error on {}: {:?}", connection_id_clone, e);
-                    format!("{}: Error", connection_id_clone)
-                }
-            }
-        });
+        let work_sender_clone = work_sender.clone(); // Clone the work sender for the broadcast task
+        spawn(broadcast_task(
+            ws_read,
+            broadcaster_clone,
+            work_sender_clone,
+            connection_id_clone,
+        ));
 
-        spawn(broadcast_task(identified_read, broadcaster_clone));
         spawn(write_task(ws_write, receiver));
     }
 
     spawn(async move {
         info!("Global sender handler started.");
-        while let Some(ConnectionMessage { connection_id, message }) = global_sender.recv().await {
-            let conn_map = connection_map.read().await;
-            if let Some(connection) = conn_map.get(&connection_id) {
-                match connection.sender.send(message).await {
-                    Ok(_) => debug!("Message sent to connection {}", connection_id),
-                    Err(e) => error!("Failed to send message to connection {}: {}", connection_id, e),
-                }
-            } else {
-                warn!("No connection found for ID: {}", connection_id);
+        while let Some(connection_message) = global_sender.recv().await {
+            if work_sender.send(connection_message).await.is_err() {
+                error!("Failed to send work to the worker pool");
             }
         }
     });
@@ -165,7 +162,6 @@ pub async fn websocket_manager(
     }
 
     info!("At least one connection is no longer active. Cleaning up before websocket_manager exits.");
-    // Perform any necessary cleanup here
 }
 
 async fn ws_connection_manager(uri: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, String> {

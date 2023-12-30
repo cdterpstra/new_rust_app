@@ -4,12 +4,14 @@ mod websocket_manager; // Import the module containing websocket_manager
 mod write_task;
 mod connect_to_websocket;
 mod broadcast_task;
+mod common;
 
-use crate::websocket_manager::{ConnectionMessage, websocket_manager};
+use crate::websocket_manager::{websocket_manager};
 use tokio::sync::mpsc::channel;
 use tokio::sync::broadcast;
 use log::debug; // Import the debug! macro
 use tokio::signal; // Import signal handling
+use crate::common::ConnectionMessage;
 
 #[tokio::main]
 async fn main() {

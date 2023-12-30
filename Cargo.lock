@@ -416,6 +416,7 @@ dependencies = [
  "env_logger",
  "futures-util",
  "log",
+ "pin-utils",
  "rand",
  "time",
  "tokio",

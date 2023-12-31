@@ -1,5 +1,5 @@
-// In common.rs or types.rs
 pub struct ConnectionMessage {
-    pub connection_id: u32,
+    pub endpoint: String,
+    pub connection_timestamp: u128,  // Renamed and type changed to u128
     pub message: String,
 }

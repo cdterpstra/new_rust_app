@@ -10,6 +10,7 @@ pub struct PingManager {
 }
 
 impl PingManager {
+    // Adjusting the type of the connection_map parameter
     pub fn new(connection_map: Arc<RwLock<HashMap<u128, Connection>>>, write_sender: Sender<String>) -> Self {
         debug!("Initializing new PingManager with connection map.");
         // Log the pointer address and strong count of the connection_map upon PingManager creation
@@ -43,6 +44,7 @@ impl PingManager {
     }
 
     async fn send_ping(connection_map: &Arc<RwLock<HashMap<u128, Connection>>>, connection_timestamp: u128, write_sender: &Sender<String>) {
+        // ... (rest of the code remains unchanged)
         debug!("Attempting to acquire read lock on connection_map to send ping to timestamp: {}", connection_timestamp);
         let read_map = connection_map.read().await;
 

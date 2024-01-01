@@ -28,10 +28,10 @@ async fn main() {
     let base_url = "wss://stream-testnet.bybit.com/v5/";
     let endpoints = vec![
         "public/spot",
-        // "public/linear",
-        // "public/inverse",
-        // "public/option",
-        // "private",
+        "public/linear",
+        "public/inverse",
+        "public/option",
+        "private",
     ];
 
     let (_, global_receiver) = channel::<ConnectionMessage>(100);
@@ -39,7 +39,7 @@ async fn main() {
     let (signal_sender, signal_receiver) = mpsc::channel::<String>(100);
     let (write_sender, _) = tokio::sync::mpsc::channel::<String>(100);
 
-    let connection_map: Arc<RwLock<HashMap<u128, Connection>>> = Arc::new(RwLock::new(HashMap::new()));
+    let connection_map: Arc<RwLock<HashMap<u128, Connection>>> = Arc::new(RwLock::new(HashMap::new())); // Adjusted the key type here
     debug!("Initialized empty connection_map.");
 
     debug!("Starting PingManager.");
@@ -53,7 +53,7 @@ async fn main() {
         global_receiver,
         broadcaster,
         signal_sender,
-        connection_map.clone()
+        connection_map.clone() // This now matches the expected type
     ).await;
 
     debug!("Websocket manager started.");

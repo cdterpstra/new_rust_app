@@ -14,11 +14,12 @@ use crate::write_task::write_task;
 #[derive(Debug)]
 pub struct Connection {
     pub(crate) sender: Sender<String>,
+    pub(crate) endpoint_name: String, // Field to store endpoint name
 }
 
 impl Connection {
-    pub fn new(sender: Sender<String>) -> Self {
-        Connection { sender }
+    pub fn new(sender: Sender<String>, endpoint_name: String) -> Self {
+        Connection { sender, endpoint_name }
     }
 }
 
@@ -65,8 +66,8 @@ pub async fn websocket_manager(
         let mut conn_map = connection_map.write().await;
         let key = connection_timestamp;
 
-        conn_map.insert(key, Connection::new(sender));
-        debug!("New connection added with timestamp: {}. Current state of connection_map: {:?}", connection_timestamp, conn_map);
+        conn_map.insert(key, Connection::new(sender, endpoint.to_string()));
+        debug!("New connection added with timestamp: {}. Current state of connection_map: {:?}", key, conn_map);
         debug!("After insertion, connection_map Arc pointer address: {:?}", Arc::as_ptr(&connection_map));
         debug!("After insertion, connection_map Arc strong count: {}", Arc::strong_count(&connection_map));
 

@@ -27,7 +27,7 @@ pub async fn websocket_manager(
     base_url: &str,
     endpoints: Vec<&str>,
     mut global_sender: Receiver<ConnectionMessage>,
-    broadcaster: Broadcaster<String>,
+    broadcaster: Broadcaster<ConnectionMessage>,
     signal_sender: Sender<String>,
     connection_map: Arc<RwLock<HashMap<u128, Connection>>>,
 ) {

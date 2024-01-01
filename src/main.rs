@@ -7,6 +7,7 @@ mod common;
 mod subscription_manager;
 mod authentication;
 mod ping_manager;
+mod message_listener;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,19 +32,27 @@ async fn main() {
         "public/linear",
         "public/inverse",
         "public/option",
-        "private",
+        // "private",
     ];
 
     let (_, global_receiver) = channel::<ConnectionMessage>(100);
-    let (broadcaster, _) = broadcast::channel::<String>(100);
+    let (broadcaster, _) = broadcast::channel::<ConnectionMessage>(100);
+
     let (signal_sender, signal_receiver) = mpsc::channel::<String>(100);
-    let (write_sender, _) = tokio::sync::mpsc::channel::<String>(100);
+    // let (write_sender, _) = tokio::sync::mpsc::channel::<String>(100);
+    let (connection_message_sender, connection_message_receiver) = channel::<ConnectionMessage>(100);
 
     let connection_map: Arc<RwLock<HashMap<u128, Connection>>> = Arc::new(RwLock::new(HashMap::new())); // Adjusted the key type here
     debug!("Initialized empty connection_map.");
 
+    // Subscribe to the broadcaster
+    let receiver = broadcaster.subscribe();
+
+    // Spawn the listener task with the corrected receiver type
+    tokio::spawn(message_listener::listen_for_messages(receiver));
+
     debug!("Starting PingManager.");
-    let ping_manager = ping_manager::PingManager::new(connection_map.clone(), write_sender);
+    let ping_manager = ping_manager::PingManager::new(connection_map.clone(), connection_message_sender);
     ping_manager.start(signal_receiver).await;
 
     debug!("Starting websocket manager.");

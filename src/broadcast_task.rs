@@ -1,3 +1,6 @@
+// src/broadcast_task.rs
+// This is where WebSocket messages are read, converted into ConnectionMessages, and broadcast.
+
 use tokio::sync::broadcast::{Sender as Broadcaster};
 use futures_util::stream::Stream;
 use futures_util::StreamExt;
@@ -10,7 +13,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 pub async fn broadcast_task(
     identified_read: impl Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Send + 'static,
-    broadcaster: Broadcaster<String>,
+    broadcaster: Broadcaster<ConnectionMessage>,
     work_sender: MpscSender<ConnectionMessage>,
     endpoint: String,
     connection_timestamp: u128,
@@ -21,16 +24,16 @@ pub async fn broadcast_task(
         match message_result {
             Ok(Message::Text(text)) => {
                 let work = ConnectionMessage {
-                    endpoint: endpoint.clone(),
+                    endpoint: Some(endpoint.clone()),
                     connection_timestamp,
                     message: text.clone(),
                 };
 
-                if let Err(e) = work_sender.send(work).await {
+                if let Err(e) = work_sender.send(work.clone()).await {
                     error!("Failed to dispatch incoming message to worker pool: {:#?}", e);
                 }
 
-                if let Err(e) = broadcaster.send(text) {
+                if let Err(e) = broadcaster.send(work) {
                     warn!("Error broadcasting message: {:#?}", e);
                 }
             }

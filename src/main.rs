@@ -1,75 +1,52 @@
 // main.rs
 
-mod websocket_manager; // Import the module containing websocket_manager
-mod write_task;
-mod broadcast_task;
+// Module Imports
 mod common;
-mod subscription_manager;
-mod authentication;
+mod listener;
 mod ping_manager;
-mod message_listener;
+mod websocket_manager;
 
+// External Library Imports
+use log::debug;
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::websocket_manager::Connection;
-use tokio::sync::mpsc::channel;
-use tokio::sync::{broadcast, mpsc, RwLock};
-use log::debug;
 use tokio::signal;
-use crate::common::ConnectionMessage;
+use tokio::sync::{broadcast, RwLock};
 
+// Local Module Imports
+use crate::ping_manager::ping_manager;
+use crate::websocket_manager::{websocket_manager, BroadcastMessage};
 
 #[tokio::main]
 async fn main() {
-    env_logger::init(); // Initialize the logger
+    // Initialize the logger
+    env_logger::init();
+    debug!("Application started");
 
-    debug!("Application started"); // Log application start
-
-    // Define base URL and endpoints
+    // Configuration
     let base_url = "wss://stream-testnet.bybit.com/v5/";
     let endpoints = vec![
         "public/spot",
         "public/linear",
         "public/inverse",
         "public/option",
-        // "private",
     ];
 
-    let (_, global_receiver) = channel::<ConnectionMessage>(100);
-    let (broadcaster, _) = broadcast::channel::<ConnectionMessage>(100);
+    // Setup Broadcast channel
+    let (broadcaster, _) = broadcast::channel::<BroadcastMessage>(100);
 
-    let (signal_sender, signal_receiver) = mpsc::channel::<String>(100);
-    // let (write_sender, _) = tokio::sync::mpsc::channel::<String>(100);
-    let (connection_message_sender, connection_message_receiver) = channel::<ConnectionMessage>(100);
+    // Initialize shared connection map
+    let connection_map: Arc<RwLock<HashMap<u128, crate::common::WebSocketConnection>>> =
+        Arc::new(RwLock::new(HashMap::new()));
 
-    let connection_map: Arc<RwLock<HashMap<u128, Connection>>> = Arc::new(RwLock::new(HashMap::new())); // Adjusted the key type here
-    debug!("Initialized empty connection_map.");
-
-    // Subscribe to the broadcaster
+    // Setup listener for incoming messages
     let receiver = broadcaster.subscribe();
+    tokio::spawn(listener::listen_for_messages(receiver));
 
-    // Spawn the listener task with the corrected receiver type
-    tokio::spawn(message_listener::listen_for_messages(receiver));
+    // Background tasks: Ping Manager and Websocket Manager
+    tokio::spawn(ping_manager(connection_map.clone()));
+    websocket_manager(base_url, endpoints, connection_map, broadcaster).await;
 
-    debug!("Starting PingManager.");
-    let ping_manager = ping_manager::PingManager::new(connection_map.clone(), connection_message_sender);
-    ping_manager.start(signal_receiver).await;
-
-    debug!("Starting websocket manager.");
-    websocket_manager::websocket_manager(
-        base_url,
-        endpoints,
-        global_receiver,
-        broadcaster,
-        signal_sender,
-        connection_map.clone() // This now matches the expected type
-    ).await;
-
-    debug!("Websocket manager started.");
-
-    debug!("Waiting for CTRL+C signal.");
+    // Await until signal for shutdown is received
     signal::ctrl_c().await.expect("Failed to listen for CTRL+C");
-    debug!("CTRL+C received, exiting...");
-
-    debug!("Application shutdown");
 }

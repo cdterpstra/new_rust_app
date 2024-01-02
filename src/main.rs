@@ -30,6 +30,7 @@ async fn main() {
         "public/linear",
         "public/inverse",
         "public/option",
+        "private"
     ];
 
     // Setup Broadcast channel

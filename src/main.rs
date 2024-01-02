@@ -34,18 +34,20 @@ async fn main() {
     ];
 
     // Setup Broadcast channel
-    let (broadcaster, _) = broadcast::channel::<BroadcastMessage>(100);
+    let (broadcaster, _) = broadcast::channel::<BroadcastMessage>(16); // Only the broadcaster is used later
 
     // Initialize shared connection map
     let connection_map: Arc<RwLock<HashMap<u128, crate::common::WebSocketConnection>>> =
         Arc::new(RwLock::new(HashMap::new()));
 
     // Setup listener for incoming messages
-    let receiver = broadcaster.subscribe();
-    tokio::spawn(listener::listen_for_messages(receiver));
+    let listener_receiver = broadcaster.subscribe(); // Receiver for the listener
+    tokio::spawn(listener::listen_for_messages(listener_receiver));
 
     // Background tasks: Ping Manager and Websocket Manager
-    tokio::spawn(ping_manager(connection_map.clone()));
+    let ping_receiver = broadcaster.subscribe(); // Receiver for the ping manager
+    tokio::spawn(ping_manager(connection_map.clone(), ping_receiver)); // Pass the receiver here
+
     websocket_manager(base_url, endpoints, connection_map, broadcaster).await;
 
     // Await until signal for shutdown is received

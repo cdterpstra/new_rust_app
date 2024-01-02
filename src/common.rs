@@ -16,3 +16,10 @@ pub struct StartPingMessage {
     pub endpoint_name: String,
     pub ws_sender: mpsc::Sender<Message>,
 }
+
+#[derive(Debug, Clone)]
+pub struct PongStatus {
+    pub endpoint_name: String,
+    pub timestamp: u128,
+    pub message: String,
+}

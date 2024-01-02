@@ -1,12 +1,9 @@
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc, broadcast};
-use log::{info, error};
+use tokio::sync::{mpsc, broadcast};
+use log::{info, error, debug};
 use futures_util::{StreamExt, SinkExt};
-use std::collections::HashMap;
 use tokio::{spawn, time};
-use rand::{Rng, rngs::StdRng, SeedableRng}; // adjusted import
-use crate::common::WebSocketConnection;
+use rand::{Rng, rngs::StdRng, SeedableRng};
 
 #[derive(Debug, Clone)]
 pub struct BroadcastMessage {
@@ -15,30 +12,60 @@ pub struct BroadcastMessage {
     pub message: Message,
 }
 
+// Define a structure for your start ping message
+#[derive(Debug)]
+pub struct StartPingMessage {
+    pub timestamp: u128,
+    pub endpoint_name: String,
+    pub ws_sender: mpsc::Sender<Message>,
+}
+
+// Implement sending of the start ping message using an mpsc channel
+async fn send_startping_message(
+    sender: mpsc::Sender<StartPingMessage>,
+    endpoint_name: String,
+    timestamp: u128,
+    ws_sender: mpsc::Sender<Message>, // Added parameter for WebSocket sender
+) {
+    let message = StartPingMessage {
+        timestamp,
+        endpoint_name,
+        ws_sender // Pass this along
+    };
+
+    debug!("Sending start ping message: {:?}", message); // Debug before sending
+
+    if let Err(e) = sender.send(message).await {
+        error!("Failed to send start ping message: {:?}", e);
+    } else {
+        info!("Start ping message sent");
+    }
+}
+
 async fn manage_connection(
     uri: String,
     global_broadcaster: broadcast::Sender<BroadcastMessage>,
-    connection_map: Arc<RwLock<HashMap<u128, WebSocketConnection>>>
+    ping_sender: mpsc::Sender<StartPingMessage>,
 ) {
     let mut retry_delay = 1; // start with 1 second
     let mut rng = StdRng::from_entropy(); // using StdRng which is Send
 
-    loop { // Reconnection loop
+    debug!("Starting manage_connection for {}", uri); // Debug at the start of connection management
+
+    loop {
         match connect_async(&uri).await {
             Ok((ws_stream, _)) => {
-                info!("Connected to {}", uri);
+                debug!("Connection established to {}", uri); // Debug on successful connection
                 retry_delay = 1; // Reset retry delay upon successful connection
-                let (tx, mut rx) = mpsc::channel(32);
 
                 let timestamp = chrono::Utc::now().timestamp_millis() as u128;
-                connection_map.write().await.insert(timestamp, WebSocketConnection {
-                    sender: tx.clone(),
-                    endpoint_name: uri.clone(),
-                });
 
                 let (mut write, mut read) = ws_stream.split();
+                let (tx, mut rx) = mpsc::channel(32);
 
-                let write_handle = spawn(async move {
+                send_startping_message(ping_sender.clone(), uri.clone(), timestamp, tx.clone()).await;
+
+                spawn(async move {
                     while let Some(message) = rx.recv().await {
                         if let Err(e) = write.send(message).await {
                             error!("Error sending ws message: {:?}", e);
@@ -56,6 +83,7 @@ async fn manage_connection(
                                 message: msg,
                             };
                             global_broadcaster.send(broadcast_msg).expect("Failed to broadcast message");
+                            debug!("Broadcasted message from {}", uri); // Debug after broadcasting a message
                         },
                         Err(e) => {
                             error!("Error receiving ws message: {:?}", e);
@@ -64,17 +92,14 @@ async fn manage_connection(
                     }
                 }
 
-                // If you reach here, the connection is closed or errored out
-                connection_map.write().await.remove(&timestamp); // Remove the connection from the map
-                write_handle.abort(); // Stop sending messages
-                info!("Connection lost to {}. Attempting to reconnect...", uri);
+                debug!("Connection lost to {}. Attempting to reconnect...", uri); // Debug on connection loss
             },
             Err(e) => {
                 error!("Failed to connect to {}: {:?}", uri, e);
+                debug!("Retrying connection to {} after {} seconds", uri, retry_delay); // Debug retry logic
             }
         }
 
-        // Exponential backoff calculation
         let jitter = rng.gen_range(0..6); // jitter of up to 5 seconds
         let sleep_time = std::cmp::min(retry_delay, 1024) + jitter; // capping the retry_delay at 1024 seconds
         time::sleep(time::Duration::from_secs(sleep_time)).await;
@@ -85,11 +110,14 @@ async fn manage_connection(
 pub async fn websocket_manager(
     base_url: &str,
     endpoints: Vec<&str>,
-    connection_map: Arc<RwLock<HashMap<u128, WebSocketConnection>>>,
-    global_broadcaster: broadcast::Sender<BroadcastMessage>
+    global_broadcaster: broadcast::Sender<BroadcastMessage>,
+    ping_sender: mpsc::Sender<StartPingMessage>, // Adjusted to accept ping_sender from main.rs
 ) {
+    debug!("Initializing WebSocket manager"); // Debug when starting manager
+
     for endpoint in endpoints.iter() {
         let uri = format!("{}{}", base_url, endpoint);
-        spawn(manage_connection(uri, global_broadcaster.clone(), connection_map.clone()));
+        debug!("Spawning manage_connection for {}", uri); // Debug before spawning
+        spawn(manage_connection(uri, global_broadcaster.clone(), ping_sender.clone()));
     }
 }

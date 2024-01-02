@@ -1,7 +1,7 @@
 use tokio::sync::broadcast;
 use log::info;
 
-use crate::websocket_manager::BroadcastMessage;  // Ensure this is accessible in this module
+use crate::BroadcastMessage;  // Ensure this is accessible in this module
 
 /// Listens for messages from the broadcast channel and prints them
 pub async fn listen_for_messages(mut receiver: broadcast::Receiver<BroadcastMessage>) {

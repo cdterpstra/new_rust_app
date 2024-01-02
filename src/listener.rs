@@ -9,7 +9,7 @@ pub async fn listen_for_messages(mut receiver: broadcast::Receiver<BroadcastMess
         match receiver.recv().await {
             Ok(broadcast_msg) => {
                 // Print the received message to the screen
-                info!("Received Message at {} from {}: {:?}", broadcast_msg.timestamp, broadcast_msg.endpoint_name, broadcast_msg.message);
+                info!("Received Message with id {} from {}: {:?}", broadcast_msg.timestamp, broadcast_msg.endpoint_name, broadcast_msg.message);
             }
             Err(e) => {
                 // Handle any errors (e.g., if the sender is dropped)

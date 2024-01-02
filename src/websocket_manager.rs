@@ -4,21 +4,11 @@ use log::{info, error, debug};
 use futures_util::{StreamExt, SinkExt};
 use tokio::{spawn, time};
 use rand::{Rng, rngs::StdRng, SeedableRng};
+use crate::common::{StartPingMessage, BroadcastMessage};
 
-#[derive(Debug, Clone)]
-pub struct BroadcastMessage {
-    pub timestamp: u128,
-    pub endpoint_name: String,
-    pub message: Message,
-}
 
 // Define a structure for your start ping message
-#[derive(Debug)]
-pub struct StartPingMessage {
-    pub timestamp: u128,
-    pub endpoint_name: String,
-    pub ws_sender: mpsc::Sender<Message>,
-}
+
 
 // Implement sending of the start ping message using an mpsc channel
 async fn send_startping_message(

@@ -4,15 +4,17 @@
 mod listener;
 mod ping_manager;
 mod websocket_manager;
+mod common;
 
 // External Library Imports
 use log::debug;
 use tokio::signal;
 use tokio::sync::{broadcast, mpsc};
 use crate::ping_manager::ping_manager;
+use crate::common::{StartPingMessage, BroadcastMessage};
 
 // Local Module Imports
-use crate::websocket_manager::{websocket_manager, BroadcastMessage, StartPingMessage};
+use crate::websocket_manager::{websocket_manager};
 
 #[tokio::main]
 async fn main() {
@@ -37,7 +39,7 @@ async fn main() {
     let (internal_sender, internal_receiver) = mpsc::channel::<StartPingMessage>(100);
 
     // Start the ping manager
-    tokio::spawn(ping_manager(internal_receiver));
+    tokio::spawn(ping_manager(internal_receiver, broadcaster.clone()));
 
     // Setup listener for incoming messages
     let listener_receiver = broadcaster.subscribe(); // Receiver for the listener

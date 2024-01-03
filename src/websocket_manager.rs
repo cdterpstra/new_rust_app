@@ -1,29 +1,25 @@
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tokio::sync::{mpsc, broadcast};
-use log::{info, error, debug};
-use futures_util::{StreamExt, SinkExt};
+use crate::common::{BroadcastMessage, PongStatus, StartPingMessage};
+use colored::Colorize;
+use futures_util::{SinkExt, StreamExt};
+use log::{debug, error, info};
+use rand::{rngs::StdRng, Rng, SeedableRng};
+use tokio::sync::{broadcast, mpsc};
 use tokio::{spawn, time};
-use rand::{Rng, rngs::StdRng, SeedableRng};
-use crate::common::{StartPingMessage, BroadcastMessage};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
-
-// Define a structure for your start ping message
-
-
-// Implement sending of the start ping message using an mpsc channel
 async fn send_startping_message(
     sender: mpsc::Sender<StartPingMessage>,
     endpoint_name: String,
     timestamp: u128,
-    ws_sender: mpsc::Sender<Message>, // Added parameter for WebSocket sender
+    ws_sender: mpsc::Sender<Message>,
 ) {
     let message = StartPingMessage {
         timestamp,
         endpoint_name,
-        ws_sender // Pass this along
+        ws_sender,
     };
 
-    debug!("Sending start ping message: {:?}", message); // Debug before sending
+    debug!("Sending start ping message: {:?}", message);
 
     if let Err(e) = sender.send(message).await {
         error!("Failed to send start ping message: {:?}", e);
@@ -36,24 +32,52 @@ async fn manage_connection(
     uri: String,
     global_broadcaster: broadcast::Sender<BroadcastMessage>,
     ping_sender: mpsc::Sender<StartPingMessage>,
+    mut pong_status_receiver: broadcast::Receiver<PongStatus>,
 ) {
-    let mut retry_delay = 1; // start with 1 second
-    let mut rng = StdRng::from_entropy(); // using StdRng which is Send
+    let mut retry_delay = 1;
+    let mut rng = StdRng::from_entropy();
 
-    debug!("Starting manage_connection for {}", uri); // Debug at the start of connection management
+    debug!("Starting manage_connection for {}", uri);
+
+    // Spawn a new task to listen for PongStatus messages
+    let uri_clone = uri.clone(); // Clone URI to use in the spawned task
+    spawn(async move {
+        while let Ok(pong_status) = pong_status_receiver.recv().await {
+            // Check if the PongStatus message is for the current endpoint
+            if pong_status.endpoint_name == uri_clone {
+                debug!(
+                    "{} {} {:?}",
+                    "Received pong status for:".green(),
+                    uri_clone.green(),
+                    pong_status
+                );
+                // Process the PongStatus message as needed
+            } else {
+                debug!(
+                    "{} {} {} {}",
+                    "This is endpoint:".red(),
+                    uri_clone.red(),
+                    "re-queuing PongStatus for endpoint:".red(),
+                    pong_status.endpoint_name.red()
+                );
+                // Re-queue the message for other consumers
+            }
+        }
+    });
 
     loop {
         match connect_async(&uri).await {
             Ok((ws_stream, _)) => {
-                debug!("Connection established to {}", uri); // Debug on successful connection
-                retry_delay = 1; // Reset retry delay upon successful connection
+                debug!("Connection established to {}", uri);
+                retry_delay = 1;
 
                 let timestamp = chrono::Utc::now().timestamp_millis() as u128;
 
                 let (mut write, mut read) = ws_stream.split();
                 let (tx, mut rx) = mpsc::channel(32);
 
-                send_startping_message(ping_sender.clone(), uri.clone(), timestamp, tx.clone()).await;
+                send_startping_message(ping_sender.clone(), uri.clone(), timestamp, tx.clone())
+                    .await;
 
                 spawn(async move {
                     while let Some(message) = rx.recv().await {
@@ -72,9 +96,11 @@ async fn manage_connection(
                                 endpoint_name: uri.clone(),
                                 message: msg,
                             };
-                            global_broadcaster.send(broadcast_msg).expect("Failed to broadcast message");
-                            debug!("Broadcasted message from {}", uri); // Debug after broadcasting a message
-                        },
+                            if let Err(e) = global_broadcaster.send(broadcast_msg) {
+                                error!("Failed to broadcast message: {:?}", e);
+                            }
+                            debug!("Broadcasted message from {}", uri);
+                        }
                         Err(e) => {
                             error!("Error receiving ws message: {:?}", e);
                             break;
@@ -82,18 +108,21 @@ async fn manage_connection(
                     }
                 }
 
-                debug!("Connection lost to {}. Attempting to reconnect...", uri); // Debug on connection loss
-            },
+                debug!("Connection lost to {}. Attempting to reconnect...", uri);
+            }
             Err(e) => {
                 error!("Failed to connect to {}: {:?}", uri, e);
-                debug!("Retrying connection to {} after {} seconds", uri, retry_delay); // Debug retry logic
+                debug!(
+                    "Retrying connection to {} after {} seconds",
+                    uri, retry_delay
+                );
             }
         }
 
-        let jitter = rng.gen_range(0..6); // jitter of up to 5 seconds
-        let sleep_time = std::cmp::min(retry_delay, 1024) + jitter; // capping the retry_delay at 1024 seconds
+        let jitter = rng.gen_range(0..6);
+        let sleep_time = std::cmp::min(retry_delay, 1024) + jitter;
         time::sleep(time::Duration::from_secs(sleep_time)).await;
-        retry_delay *= 2; // Double the retry delay for the next round
+        retry_delay *= 2;
     }
 }
 
@@ -101,13 +130,19 @@ pub async fn websocket_manager(
     base_url: &str,
     endpoints: Vec<&str>,
     global_broadcaster: broadcast::Sender<BroadcastMessage>,
-    ping_sender: mpsc::Sender<StartPingMessage>, // Adjusted to accept ping_sender from main.rs
+    ping_sender: mpsc::Sender<StartPingMessage>,
+    pong_status_receiver: broadcast::Receiver<PongStatus>,
 ) {
-    debug!("Initializing WebSocket manager"); // Debug when starting manager
+    debug!("Initializing WebSocket manager");
 
     for endpoint in endpoints.iter() {
         let uri = format!("{}{}", base_url, endpoint);
-        debug!("Spawning manage_connection for {}", uri); // Debug before spawning
-        spawn(manage_connection(uri, global_broadcaster.clone(), ping_sender.clone()));
+
+        spawn(manage_connection(
+            uri,
+            global_broadcaster.clone(),
+            ping_sender.clone(),
+            pong_status_receiver.resubscribe(),
+        ));
     }
 }

@@ -1,19 +1,18 @@
-use log::{info, error, debug};
+use crate::common::{BroadcastMessage, PongStatus, StartPingMessage};
+use log::{debug, error, info};
 use serde_json::{json, Value};
+use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::sync::{broadcast, mpsc};
 use tokio::{spawn, time};
-use tokio::sync::{mpsc, broadcast};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use uuid::Uuid;
-use crate::common::{StartPingMessage, BroadcastMessage, PongStatus};
 
-
-
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct PingTask {
     endpoint_name: String,
     ws_sender: mpsc::Sender<Message>,
-    broadcaster: broadcast::Sender<BroadcastMessage>,
-    ping_status_sender: mpsc::Sender<PongStatus>, // Include success_sender in PingTask
+    broadcaster: Receiver<BroadcastMessage>,
+    pong_status_sender: Sender<PongStatus>,
 }
 
 impl PingTask {
@@ -27,22 +26,32 @@ impl PingTask {
                 "args": null,
                 "req_id": req_id,
             })
-                .to_string();
+            .to_string();
 
             debug!("Sending ping message: {}", ping_message_json_string);
 
             let req_id_for_verification = req_id.clone();
             let endpoint_name_for_verification = self.endpoint_name.clone();
-            let broadcast_receiver = self.broadcaster.subscribe(); // Get a receiver to pass to verify_pong
+            let broadcast_receiver = self.broadcaster.resubscribe();
 
-            if let Err(e) = self.ws_sender.send(Message::Text(ping_message_json_string)).await {
+            if let Err(e) = self
+                .ws_sender
+                .send(Message::Text(ping_message_json_string))
+                .await
+            {
                 error!("Failed to send ping: {:?}", e);
                 break;
             }
 
-            let success_sender_clone = self.ping_status_sender.clone(); // Clone success_sender for use in the spawned task
+            let pong_status_sender_clone = self.pong_status_sender.clone();
             spawn(async move {
-                verify_pong(broadcast_receiver, req_id_for_verification, endpoint_name_for_verification, success_sender_clone).await;
+                verify_pong(
+                    broadcast_receiver,
+                    req_id_for_verification,
+                    endpoint_name_for_verification,
+                    pong_status_sender_clone,
+                )
+                .await;
             });
 
             info!("Ping sent to {} with req_id {}", self.endpoint_name, req_id);
@@ -50,43 +59,60 @@ impl PingTask {
     }
 }
 
-pub async fn ping_manager(mut ping_request_receiver: mpsc::Receiver<StartPingMessage>,
-                          broadcaster: broadcast::Sender<BroadcastMessage>,
-                          ping_status_sender: mpsc::Sender<PongStatus>) {  // Add success_sender here
+pub async fn ping_manager(
+    mut ping_request_receiver: mpsc::Receiver<StartPingMessage>,
+    broadcaster: Receiver<BroadcastMessage>,
+    internalbroadcaster: Sender<PongStatus>,
+) {
     while let Some(start_message) = ping_request_receiver.recv().await {
         let ping_task = PingTask {
             endpoint_name: start_message.endpoint_name,
             ws_sender: start_message.ws_sender,
-            broadcaster: broadcaster.clone(),
-            ping_status_sender: ping_status_sender.clone(),  // Use the success_sender from the function's parameters
+            broadcaster: broadcaster.resubscribe(),
+            pong_status_sender: internalbroadcaster.clone(),
         };
         spawn(ping_task.start_pinging());
     }
 }
 
-async fn verify_pong(mut broadcast_receiver: broadcast::Receiver<BroadcastMessage>,
-                     expected_req_id: String,
-                     endpoint_name: String,
-                     ping_status_sender: mpsc::Sender<PongStatus>) {
+async fn verify_pong(
+    mut broadcast_receiver: broadcast::Receiver<BroadcastMessage>,
+    expected_req_id: String,
+    endpoint_name: String,
+    pong_status_sender: Sender<PongStatus>,
+) {
     while let Ok(broadcast_msg) = broadcast_receiver.recv().await {
         if let Message::Text(text) = &broadcast_msg.message {
             match serde_json::from_str::<Value>(text) {
                 Ok(json) => {
-                    if json["op"] == "ping" && json["req_id"] == expected_req_id && json["success"] == true {
-                        info!("Valid pong received for endpoint '{}' with req_id: {}", endpoint_name, expected_req_id);
+                    if json["op"] == "ping"
+                        && json["req_id"] == expected_req_id
+                        && json["success"] == true
+                    {
+                        info!(
+                            "Valid pong received for endpoint '{}' with req_id: {}",
+                            endpoint_name, expected_req_id
+                        );
 
-                        let success_message = PongStatus {
+                        let pong_message = PongStatus {
                             endpoint_name: endpoint_name.clone(),
-                            timestamp: broadcast_msg.timestamp, // Correctly access timestamp from the broadcast_msg
+                            timestamp: broadcast_msg.timestamp,
                             message: "Ping/Pong: Connection healthy".to_string(),
                         };
 
-                        if let Err(e) = ping_status_sender.send(success_message).await {
+                        debug!("Attempting to send PongStatus message: {:?}", pong_message);
+
+                        if let Err(e) = pong_status_sender.send(pong_message) {
                             error!("Ping/Pong: Connection unhealthy {:?}", e);
+                        } else {
+                            debug!(
+                                "PongStatus message sent successfully for endpoint '{}'",
+                                endpoint_name
+                            );
                         }
                         break;
                     }
-                },
+                }
                 Err(e) => {
                     error!("Failed to parse incoming message as JSON: {:?}", e);
                 }
@@ -94,3 +120,15 @@ async fn verify_pong(mut broadcast_receiver: broadcast::Receiver<BroadcastMessag
         }
     }
 }
+
+// Main function or wherever the manager setup is called
+// async fn setup_and_run_ping_manager() {
+//     // ... setup for other components
+//     // Create necessary channels, receivers, and senders
+//     let (pong_status_sender, _pong_status_receiver) = broadcast::channel::<PongStatus>(100);
+//
+//     // Other necessary setup like creating ping_request_receiver, broadcaster, etc.
+//
+//     // Pass pong_status_sender to ping_manager along with other necessary parameters
+//     ping_manager(ping_request_receiver, broadcaster, pong_status_sender).await;
+// }

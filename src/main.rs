@@ -5,13 +5,15 @@ mod common;
 mod listener;
 mod ping_manager;
 mod websocket_manager;
+mod subscription_manager;
 
 // External Library Imports
-use crate::common::{BroadcastMessage, PongStatus, StartPingMessage};
+use crate::common::{BroadcastMessage, Status, StartPingMessage, SubscriptionMessage};
 use crate::ping_manager::ping_manager;
 use log::debug;
 use tokio::signal;
 use tokio::sync::{broadcast, mpsc};
+use crate::subscription_manager::subscription_manager;
 
 // Local Module Imports
 use crate::websocket_manager::websocket_manager;
@@ -26,18 +28,18 @@ async fn main() {
     let base_url = "wss://stream-testnet.bybit.com/v5/";
     let endpoints = vec![
         "public/spot",
-        "public/linear",
-        "public/inverse",
-        "public/option",
-        "private",
+        // "public/linear",
+        // "public/inverse",
+        // "public/option",
+        // "private",
     ];
 
     // Setup Broadcast channel
     let (broadcaster, _) = broadcast::channel::<BroadcastMessage>(16); // Only the broadcaster is used later
 
     let (ping_request_sender, ping_request_receiver) = mpsc::channel::<StartPingMessage>(100);
-
-    let (internalbroadcaster, _) = broadcast::channel::<PongStatus>(100);
+    let (subscription_request_sender, subscription_request_receiver) = mpsc::channel::<SubscriptionMessage>(100);
+    let (internalbroadcaster, _) = broadcast::channel::<Status>(100);
 
     // Start the ping manager
     tokio::spawn(ping_manager(
@@ -46,17 +48,18 @@ async fn main() {
         internalbroadcaster.clone(),
     ));
 
+    // Start the subscription manager
+    tokio::spawn(subscription_manager(
+        subscription_request_receiver,
+        broadcaster.subscribe(),
+        internalbroadcaster.clone(),
+    ));
+
     // Setup listener for incoming messages
     let listener_receiver = broadcaster.subscribe(); // Receiver for the listener
     tokio::spawn(listener::listen_for_messages(listener_receiver));
 
-    websocket_manager(
-        base_url,
-        endpoints,
-        broadcaster,
-        ping_request_sender,
-        internalbroadcaster.subscribe(),
-    )
+    websocket_manager(base_url, endpoints, broadcaster, ping_request_sender, internalbroadcaster.subscribe(), subscription_request_sender)
     .await;
 
     // Await until signal for shutdown is received

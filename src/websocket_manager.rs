@@ -1,4 +1,4 @@
-use crate::common::{BroadcastMessage, PongStatus, StartPingMessage};
+use crate::common::{BroadcastMessage, StartPingMessage, Status, SubscriptionMessage};
 use colored::Colorize;
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error, info};
@@ -28,11 +28,33 @@ async fn send_startping_message(
     }
 }
 
+async fn send_subscription_message(
+    sender: mpsc::Sender<SubscriptionMessage>,
+    endpoint_name: String,
+    timestamp: u128,
+    ws_sender: mpsc::Sender<Message>,
+) {
+    let message = SubscriptionMessage {
+        timestamp,
+        endpoint_name,
+        ws_sender,
+    };
+
+    debug!("Sending start subscription message: {:?}", message);
+
+    if let Err(e) = sender.send(message).await {
+        error!("Failed to send start subscription message: {:?}", e);
+    } else {
+        info!("Start subscription message sent");
+    }
+}
+
 async fn manage_connection(
     uri: String,
     global_broadcaster: broadcast::Sender<BroadcastMessage>,
     ping_sender: mpsc::Sender<StartPingMessage>,
-    mut pong_status_receiver: broadcast::Receiver<PongStatus>,
+    mut status_receiver: broadcast::Receiver<Status>,
+    subscription_sender: mpsc::Sender<SubscriptionMessage>,
 ) {
     let mut retry_delay = 1;
     let mut rng = StdRng::from_entropy();
@@ -42,9 +64,9 @@ async fn manage_connection(
     // Spawn a new task to listen for PongStatus messages
     let uri_clone = uri.clone(); // Clone URI to use in the spawned task
     spawn(async move {
-        while let Ok(pong_status) = pong_status_receiver.recv().await {
+        while let Ok(pong_status) = status_receiver.recv().await {
             // Check if the PongStatus message is for the current endpoint
-            if pong_status.endpoint_name == uri_clone {
+            if pong_status.endpoint_name == uri_clone && pong_status.sending_party == "pingmanager" {
                 debug!(
                     "{} {} {:?}",
                     "Received pong status for:".green(),
@@ -57,10 +79,9 @@ async fn manage_connection(
                     "{} {} {} {}",
                     "This is endpoint:".red(),
                     uri_clone.red(),
-                    "re-queuing PongStatus for endpoint:".red(),
+                    "received PongStatus for endpoint:".red(),
                     pong_status.endpoint_name.red()
                 );
-                // Re-queue the message for other consumers
             }
         }
     });
@@ -79,6 +100,9 @@ async fn manage_connection(
                 send_startping_message(ping_sender.clone(), uri.clone(), timestamp, tx.clone())
                     .await;
 
+                send_subscription_message(subscription_sender.clone(), uri.clone(), timestamp, tx.clone())
+                    .await;
+
                 spawn(async move {
                     while let Some(message) = rx.recv().await {
                         if let Err(e) = write.send(message).await {
@@ -87,6 +111,8 @@ async fn manage_connection(
                         }
                     }
                 });
+
+
 
                 while let Some(message) = read.next().await {
                     match message {
@@ -131,7 +157,8 @@ pub async fn websocket_manager(
     endpoints: Vec<&str>,
     global_broadcaster: broadcast::Sender<BroadcastMessage>,
     ping_sender: mpsc::Sender<StartPingMessage>,
-    pong_status_receiver: broadcast::Receiver<PongStatus>,
+    status_receiver: broadcast::Receiver<Status>,
+    subscription_sender: mpsc::Sender<SubscriptionMessage>
 ) {
     debug!("Initializing WebSocket manager");
 
@@ -142,7 +169,8 @@ pub async fn websocket_manager(
             uri,
             global_broadcaster.clone(),
             ping_sender.clone(),
-            pong_status_receiver.resubscribe(),
+            status_receiver.resubscribe(),
+            subscription_sender.clone(),
         ));
     }
 }

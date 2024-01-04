@@ -1,150 +1,99 @@
+// Import necessary crates and modules
 use crate::common::{BroadcastMessage, StartPingMessage, Status, SubscriptionMessage};
-use colored::Colorize;
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error, info};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tokio::sync::{broadcast, mpsc};
 use tokio::{spawn, time};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, WebSocketStream};
 
-async fn send_startping_message(
-    sender: mpsc::Sender<StartPingMessage>,
-    endpoint_name: String,
-    timestamp: u128,
-    ws_sender: mpsc::Sender<Message>,
+// ===================================
+// == Utility Functions Section ==
+// ===================================
+
+/// Send a generic message through an mpsc channel with logging.
+async fn send_message<T: std::fmt::Debug>(
+    sender: mpsc::Sender<T>,
+    message: T,
+    message_type: &str,
 ) {
-    let message = StartPingMessage {
-        timestamp,
-        endpoint_name,
-        ws_sender,
-    };
-
-    debug!("Sending start ping message: {:?}", message);
-
+    debug!("Sending {} message: {:?}", message_type, message);
     if let Err(e) = sender.send(message).await {
-        error!("Failed to send start ping message: {:?}", e);
+        error!("Failed to send {} message: {:?}", message_type, e);
     } else {
-        info!("Start ping message sent");
+        info!("{} message sent", message_type);
     }
 }
 
-async fn send_subscription_message(
-    sender: mpsc::Sender<SubscriptionMessage>,
-    endpoint_name: String,
+/// Create a StartPingMessage with given parameters
+fn create_start_ping_message(
+    endpoint_name: &str,
     timestamp: u128,
     ws_sender: mpsc::Sender<Message>,
-) {
-    let message = SubscriptionMessage {
+) -> StartPingMessage {
+    StartPingMessage {
         timestamp,
-        endpoint_name,
+        endpoint_name: endpoint_name.to_owned(),
         ws_sender,
-    };
-
-    debug!("Sending start subscription message: {:?}", message);
-
-    if let Err(e) = sender.send(message).await {
-        error!("Failed to send start subscription message: {:?}", e);
-    } else {
-        info!("Start subscription message sent");
     }
 }
 
+/// Create a SubscriptionMessage with given parameters
+fn create_subscription_message(
+    endpoint_name: &str,
+    timestamp: u128,
+    ws_sender: mpsc::Sender<Message>,
+) -> SubscriptionMessage {
+    SubscriptionMessage {
+        timestamp,
+        endpoint_name: endpoint_name.to_owned(),
+        ws_sender,
+    }
+}
+
+// ===================================
+// == WebSocket Management Section ==
+// ===================================
+
+/// Manages individual WebSocket connections.
+/// It handles connection establishment, message sending, and reconnecting.
 async fn manage_connection(
     uri: String,
     global_broadcaster: broadcast::Sender<BroadcastMessage>,
     ping_sender: mpsc::Sender<StartPingMessage>,
-    mut status_receiver: broadcast::Receiver<Status>,
+    status_receiver: broadcast::Receiver<Status>,
     subscription_sender: mpsc::Sender<SubscriptionMessage>,
 ) {
     let mut retry_delay = 1;
     let mut rng = StdRng::from_entropy();
+    debug!("Starting connection management for {}", uri);
 
-    debug!("Starting manage_connection for {}", uri);
+    // Listen for status messages in a separate task
+    spawn(listen_for_status(status_receiver, uri.clone()));
 
-    // Spawn a new task to listen for PongStatus messages
-    let uri_clone = uri.clone(); // Clone URI to use in the spawned task
-    spawn(async move {
-        while let Ok(pong_status) = status_receiver.recv().await {
-            // Check if the PongStatus message is for the current endpoint
-            if pong_status.endpoint_name == uri_clone && pong_status.sending_party == "pingmanager" {
-                debug!(
-                    "{} {} {:?}",
-                    "Received pong status for:".green(),
-                    uri_clone.green(),
-                    pong_status
-                );
-                // Process the PongStatus message as needed
-            } else {
-                debug!(
-                    "{} {} {} {}",
-                    "This is endpoint:".red(),
-                    uri_clone.red(),
-                    "received PongStatus for endpoint:".red(),
-                    pong_status.endpoint_name.red()
-                );
-            }
-        }
-    });
 
     loop {
         match connect_async(&uri).await {
             Ok((ws_stream, _)) => {
-                debug!("Connection established to {}", uri);
+                debug!("Connected to {}", uri);
                 retry_delay = 1;
-
-                let timestamp = chrono::Utc::now().timestamp_millis() as u128;
-
-                let (mut write, mut read) = ws_stream.split();
-                let (tx, mut rx) = mpsc::channel(32);
-
-                send_startping_message(ping_sender.clone(), uri.clone(), timestamp, tx.clone())
+                handle_websocket_stream(
+                    ws_stream,
+                    &uri,
+                    &global_broadcaster,
+                    &ping_sender,
+                    &subscription_sender,
+                )
                     .await;
-
-                send_subscription_message(subscription_sender.clone(), uri.clone(), timestamp, tx.clone())
-                    .await;
-
-                spawn(async move {
-                    while let Some(message) = rx.recv().await {
-                        if let Err(e) = write.send(message).await {
-                            error!("Error sending ws message: {:?}", e);
-                            break;
-                        }
-                    }
-                });
-
-
-
-                while let Some(message) = read.next().await {
-                    match message {
-                        Ok(msg) => {
-                            let broadcast_msg = BroadcastMessage {
-                                timestamp,
-                                endpoint_name: uri.clone(),
-                                message: msg,
-                            };
-                            if let Err(e) = global_broadcaster.send(broadcast_msg) {
-                                error!("Failed to broadcast message: {:?}", e);
-                            }
-                            debug!("Broadcasted message from {}", uri);
-                        }
-                        Err(e) => {
-                            error!("Error receiving ws message: {:?}", e);
-                            break;
-                        }
-                    }
-                }
-
                 debug!("Connection lost to {}. Attempting to reconnect...", uri);
             }
             Err(e) => {
                 error!("Failed to connect to {}: {:?}", uri, e);
-                debug!(
-                    "Retrying connection to {} after {} seconds",
-                    uri, retry_delay
-                );
+                debug!("Retrying connection to {} after {} seconds", uri, retry_delay);
             }
         }
 
+        // Exponential backoff with jitter for reconnection attempts
         let jitter = rng.gen_range(0..6);
         let sleep_time = std::cmp::min(retry_delay, 1024) + jitter;
         time::sleep(time::Duration::from_secs(sleep_time)).await;
@@ -152,19 +101,112 @@ async fn manage_connection(
     }
 }
 
+/// Handles the WebSocket stream by sending ping and subscription messages
+/// and listening for incoming messages to broadcast.
+async fn handle_websocket_stream<S>(
+    ws_stream: WebSocketStream<S>,
+    uri: &String,
+    global_broadcaster: &broadcast::Sender<BroadcastMessage>,
+    ping_sender: &mpsc::Sender<StartPingMessage>,
+    subscription_sender: &mpsc::Sender<SubscriptionMessage>,
+)
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let timestamp = chrono::Utc::now().timestamp_millis() as u128;
+    let (mut write, mut read) = ws_stream.split();
+    let (tx, mut rx) = mpsc::channel(32);
+
+    // Send ping and subscription messages for this WebSocket connection
+    send_message(
+        ping_sender.clone(),
+        create_start_ping_message(uri, timestamp, tx.clone()),
+        "start ping",
+    )
+        .await;
+    send_message(
+        subscription_sender.clone(),
+        create_subscription_message(uri, timestamp, tx.clone()),
+        "subscription",
+    )
+        .await;
+
+    // Handle sending messages from the channel to the WebSocket server
+    spawn(async move {
+        while let Some(message) = rx.recv().await {
+            if let Err(e) = write.send(message).await {
+                error!("Error sending ws message: {:?}", e);
+                break;
+            }
+        }
+    });
+
+    // Handle receiving messages from the WebSocket server and broadcasting them
+    while let Some(message) = read.next().await {
+        match message {
+            Ok(msg) => {
+                let broadcast_msg = BroadcastMessage {
+                    timestamp,
+                    endpoint_name: uri.clone(),
+                    message: msg,
+                };
+                if let Err(e) = global_broadcaster.send(broadcast_msg) {
+                    error!("Failed to broadcast message: {:?}", e);
+                }
+                debug!("Broadcasted message from {}", uri);
+            }
+            Err(e) => {
+                error!("Error receiving ws message: {:?}", e);
+                break;
+            }
+        }
+    }
+}
+
+/// Listens for Status messages specific to the current endpoint.
+async fn listen_for_status(mut status_receiver: broadcast::Receiver<Status>, uri: String) {
+    while let Ok(status) = status_receiver.recv().await {
+        // Check if the status is intended for this endpoint
+        if status.endpoint_name == uri {
+            // Now filter based on the sending party
+            match status.sending_party.as_ref() {
+                "pingmanager" => {
+                    debug!("Received pong status for: {} from {}", uri, status.endpoint_name);
+                }
+                "subscription_manager" => {
+                    debug!("Received subscription status for: {} from {}", uri, status.endpoint_name);
+                }
+                _ => {
+                    debug!("Received unknown status type for: {}", uri);
+                }
+            }
+        } else {
+            // Log that the message was received but not for this endpoint
+            debug!(
+                "Received status for {}, but listening for {}",
+                status.endpoint_name, uri
+            );
+        }
+    }
+}
+
+
+// ===================================
+// == Application Entry Section ==
+// ===================================
+
+/// Main WebSocket manager, initializing connections for each endpoint.
 pub async fn websocket_manager(
     base_url: &str,
     endpoints: Vec<&str>,
     global_broadcaster: broadcast::Sender<BroadcastMessage>,
     ping_sender: mpsc::Sender<StartPingMessage>,
     status_receiver: broadcast::Receiver<Status>,
-    subscription_sender: mpsc::Sender<SubscriptionMessage>
+    subscription_sender: mpsc::Sender<SubscriptionMessage>,
 ) {
     debug!("Initializing WebSocket manager");
-
     for endpoint in endpoints.iter() {
         let uri = format!("{}{}", base_url, endpoint);
-
         spawn(manage_connection(
             uri,
             global_broadcaster.clone(),

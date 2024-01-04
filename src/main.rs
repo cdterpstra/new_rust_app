@@ -1,67 +1,86 @@
 // main.rs
 
+// ====================
 // Module Imports
+// ====================
 mod common;
 mod listener;
 mod ping_manager;
 mod websocket_manager;
 mod subscription_manager;
 
+// ====================
 // External Library Imports
+// ====================
 use crate::common::{BroadcastMessage, Status, StartPingMessage, SubscriptionMessage};
 use crate::ping_manager::ping_manager;
+use crate::subscription_manager::subscription_manager;
+use crate::websocket_manager::websocket_manager;
 use log::debug;
 use tokio::signal;
 use tokio::sync::{broadcast, mpsc};
-use crate::subscription_manager::subscription_manager;
 
-// Local Module Imports
-use crate::websocket_manager::websocket_manager;
-
+// ====================
+// Application Entry Point
+// ====================
 #[tokio::main]
 async fn main() {
-    // Initialize the logger
+    // Initialize the logger for application-wide logging
     env_logger::init();
     debug!("Application started");
 
-    // Configuration
+    // Configuration for the WebSocket connections
     let base_url = "wss://stream-testnet.bybit.com/v5/";
     let endpoints = vec![
         "public/spot",
-        // "public/linear",
+        "public/linear",
+        // Uncomment below as needed
         // "public/inverse",
         // "public/option",
         // "private",
     ];
 
-    // Setup Broadcast channel
-    let (broadcaster, _) = broadcast::channel::<BroadcastMessage>(16); // Only the broadcaster is used later
+    // Setup Broadcast channel to disseminate messages to multiple listeners
+    let (broadcaster, _) = broadcast::channel::<BroadcastMessage>(16);
 
+    // Setup channels for ping and subscription requests and internal broadcasting
     let (ping_request_sender, ping_request_receiver) = mpsc::channel::<StartPingMessage>(100);
     let (subscription_request_sender, subscription_request_receiver) = mpsc::channel::<SubscriptionMessage>(100);
     let (internalbroadcaster, _) = broadcast::channel::<Status>(100);
 
-    // Start the ping manager
+    // ====================
+    // Service Initialization Section
+    // ====================
+
+    // Start the ping manager to handle ping messages
     tokio::spawn(ping_manager(
         ping_request_receiver,
         broadcaster.subscribe(),
         internalbroadcaster.clone(),
     ));
 
-    // Start the subscription manager
+    // Start the subscription manager to handle subscription messages
     tokio::spawn(subscription_manager(
         subscription_request_receiver,
         broadcaster.subscribe(),
         internalbroadcaster.clone(),
     ));
 
-    // Setup listener for incoming messages
+    // Start the listener to handle incoming broadcast messages
     let listener_receiver = broadcaster.subscribe(); // Receiver for the listener
     tokio::spawn(listener::listen_for_messages(listener_receiver));
 
-    websocket_manager(base_url, endpoints, broadcaster, ping_request_sender, internalbroadcaster.subscribe(), subscription_request_sender)
-    .await;
+    // Initialize and run the WebSocket manager for handling connections
+    websocket_manager(
+        base_url,
+        endpoints,
+        broadcaster,
+        ping_request_sender,
+        internalbroadcaster.subscribe(),
+        subscription_request_sender,
+    )
+        .await;
 
-    // Await until signal for shutdown is received
+    // Wait for CTRL+C signal for graceful shutdown
     signal::ctrl_c().await.expect("Failed to listen for CTRL+C");
 }

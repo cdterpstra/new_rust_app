@@ -1,3 +1,4 @@
+// Import necessary crates and modules
 use crate::common::{BroadcastMessage, StartPingMessage, Status};
 use log::{debug, error, info};
 use serde_json::{json, Value};
@@ -7,6 +8,9 @@ use tokio::{spawn, time};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use uuid::Uuid;
 
+// Structs and Implementations Section
+
+/// Represents a task for sending periodic ping messages
 #[derive(Debug)]
 struct PingTask {
     endpoint_name: String,
@@ -16,6 +20,8 @@ struct PingTask {
 }
 
 impl PingTask {
+    /// Starts the pinging process. This sends a ping message every 15 seconds
+    /// and listens for pong messages to verify the connection status.
     async fn start_pinging(self) {
         let mut interval = time::interval(time::Duration::from_secs(15));
         loop {
@@ -26,13 +32,9 @@ impl PingTask {
                 "args": null,
                 "req_id": req_id,
             })
-            .to_string();
+                .to_string();
 
             debug!("Sending ping message: {}", ping_message_json_string);
-
-            let req_id_for_verification = req_id.clone();
-            let endpoint_name_for_verification = self.endpoint_name.clone();
-            let broadcast_receiver = self.broadcaster.resubscribe();
 
             if let Err(e) = self
                 .ws_sender
@@ -43,22 +45,21 @@ impl PingTask {
                 break;
             }
 
-            let pong_status_sender_clone = self.status_sender.clone();
-            spawn(async move {
-                verify_pong(
-                    broadcast_receiver,
-                    req_id_for_verification,
-                    endpoint_name_for_verification,
-                    pong_status_sender_clone,
-                )
-                .await;
-            });
+            spawn(verify_pong(
+                self.broadcaster.resubscribe(),
+                req_id.clone(),
+                self.endpoint_name.clone(),
+                self.status_sender.clone(),
+            ));
 
             info!("Ping sent to {} with req_id {}", self.endpoint_name, req_id);
         }
     }
 }
 
+// Manager and Verification Functions Section
+
+/// Manages incoming ping requests and spawns ping tasks accordingly
 pub async fn ping_manager(
     mut ping_request_receiver: mpsc::Receiver<StartPingMessage>,
     broadcaster: Receiver<BroadcastMessage>,
@@ -75,6 +76,7 @@ pub async fn ping_manager(
     }
 }
 
+/// Verifies the pong response from the server to ensure connection health
 async fn verify_pong(
     mut broadcast_receiver: Receiver<BroadcastMessage>,
     expected_req_id: String,
@@ -85,14 +87,9 @@ async fn verify_pong(
         if let Message::Text(text) = &broadcast_msg.message {
             match serde_json::from_str::<Value>(text) {
                 Ok(json) => {
-                    if json["op"] == "ping"
-                        && json["req_id"] == expected_req_id
-                        && json["success"] == true
-                    {
-                        info!(
-                            "Valid pong received for endpoint '{}' with req_id: {}",
-                            endpoint_name, expected_req_id
-                        );
+                    // ... handle successful parsing ...
+                    if json["op"] == "ping" && json["req_id"] == expected_req_id && json["success"] == true {
+                        info!("Valid pong received for endpoint '{}' with req_id: {}", endpoint_name, expected_req_id);
 
                         let pong_message = Status {
                             endpoint_name: endpoint_name.clone(),
@@ -106,15 +103,12 @@ async fn verify_pong(
                         if let Err(e) = status_sender.send(pong_message) {
                             error!("Ping/Pong: Connection unhealthy {:?}", e);
                         } else {
-                            debug!(
-                                "PongStatus message sent successfully for endpoint '{}'",
-                                endpoint_name
-                            );
+                            debug!("PongStatus message sent successfully for endpoint '{}'", endpoint_name);
                         }
-                        break;
                     }
                 }
                 Err(e) => {
+                    // Now `e` is in scope and holds the error
                     error!("Failed to parse incoming message as JSON: {:?}", e);
                 }
             }

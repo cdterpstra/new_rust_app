@@ -1,7 +1,9 @@
 // Import necessary crates and modules
+use chrono::{Duration, Utc, TimeZone};
 use crate::common::{BroadcastMessage, StartPingMessage, Status};
-use log::{debug, error, info};
-use serde_json::{json, Value};
+use log::{debug, error, info, trace};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::mpsc;
 use tokio::{spawn, time};
@@ -85,33 +87,99 @@ async fn verify_pong(
 ) {
     while let Ok(broadcast_msg) = broadcast_receiver.recv().await {
         if let Message::Text(text) = &broadcast_msg.message {
-            match serde_json::from_str::<Value>(text) {
-                Ok(json) => {
-                    // ... handle successful parsing ...
-                    if json["op"] == "ping" && json["req_id"] == expected_req_id && json["success"] == true {
-                        info!("Valid pong received for endpoint '{}' with req_id: {}", endpoint_name, expected_req_id);
+            match serde_json::from_str::<Operation>(text) {
+                Ok(operation) => {
+                    match operation {
+                        Operation::ping { success, ret_msg: _, req_id } => {
+                            if success && req_id == expected_req_id {
+                                send_status(&status_sender, &endpoint_name, broadcast_msg.timestamp, "Ping/Pong: Connection healthy", "pingmanager").await;
+                                debug!("Message: Connection healthy sent");
+                            }
+                        },
+                        Operation::pong { args } => {
+                            // Assuming timestamp is properly extracted from args and is a string representing u128
+                            if let Some(timestamp_str) = args.first() {
+                                debug!("Timestamp u128: {:?}",timestamp_str);
+                                if let Ok(timestamp) = timestamp_str.parse::<i128>() {
+                                    // Convert the u128 timestamp to DateTime<Utc>
+                                    debug!("Timestamp datetime: {}", timestamp);
+                                    if let Some(pong_time) = chrono::NaiveDateTime::from_timestamp_opt(
+                                        (timestamp / 1000) as i64,  // converts milliseconds to seconds
+                                        ((timestamp % 1000) * 1_000_000) as u32 // remainder as nanoseconds
+                                    ).map(|naive| Utc.from_utc_datetime(&naive)) {
 
-                        let pong_message = Status {
-                            endpoint_name: endpoint_name.clone(),
-                            timestamp: broadcast_msg.timestamp,
-                            message: "Ping/Pong: Connection healthy".to_string(),
-                            sending_party: "pingmanager".to_string(),
-                        };
-
-                        debug!("Attempting to send PongStatus message: {:?}", pong_message);
-
-                        if let Err(e) = status_sender.send(pong_message) {
-                            error!("Ping/Pong: Connection unhealthy {:?}", e);
-                        } else {
-                            debug!("PongStatus message sent successfully for endpoint '{}'", endpoint_name);
+                                        let current_time = Utc::now();
+                                        let duration_since_pong = current_time - pong_time;
+                                        debug!("Timestamp difference is curren_time: {} - pong_time {}", current_time, pong_time);
+                                        debug!("Duration ms is: {}", duration_since_pong * 1000);
+                                        if duration_since_pong <= Duration::milliseconds(200) {
+                                            // Timestamp is within the last 5 seconds
+                                            send_status(&status_sender, &endpoint_name, broadcast_msg.timestamp, "Ping/Pong: Connection healthy", "pingmanager").await;
+                                            debug!("Message: Connection healthy sent");
+                                        } else {
+                                            // Timestamp is older than 5 seconds
+                                            send_status(&status_sender, &endpoint_name, broadcast_msg.timestamp, "Ping/Pong: Timestamp older than 5 seconds", "pingmanager").await;
+                                            debug!("Message: Timestamp older than 5 seconds sent");
+                                        }
+                                    } else {
+                                        // Handle case where timestamp is invalid or pong message doesn't fit expected structure
+                                        error!("Failed to parse pong message for timestamp validation or timestamp is out of range");
+                                    }
+                                } else {
+                                    // Handle case where timestamp string could not be parsed to a u128
+                                    error!("Failed to parse timestamp string to u128");
+                                }
+                            } else {
+                                // Handle case where args does not contain any elements or timestamp
+                                error!("Args does not contain timestamp or is empty");
+                            }
                         }
+
+
                     }
-                }
-                Err(e) => {
-                    // Now `e` is in scope and holds the error
-                    error!("Failed to parse incoming message as JSON: {:?}", e);
+
+                    },
+                Err(_e) => {
+                    trace!("Received a non-targeted message, skipping.");
                 }
             }
         }
     }
+}
+
+async fn send_status(
+    status_sender: &Sender<Status>,
+    endpoint_name: &String,
+    timestamp: u128,
+    message: &str,
+    sending_party: &str,
+) {
+    let status_message = Status {
+        endpoint_name: endpoint_name.clone(),
+        timestamp,
+        message: message.to_string(),
+        sending_party: sending_party.to_string(),
+    };
+
+    debug!("Attempting to send status message: {:?}", status_message);
+
+    if let Err(e) = status_sender.send(status_message) {
+        error!("Failed to send status message: {:?}", e);
+    } else {
+        debug!("Status message sent successfully for endpoint '{}'", endpoint_name);
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "op")]
+enum Operation {
+    ping {
+        success: bool,
+        ret_msg: String,
+        req_id: String,
+    },
+    pong {
+        args: Vec<String>,
+    },
 }

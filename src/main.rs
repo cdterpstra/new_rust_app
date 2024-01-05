@@ -34,10 +34,9 @@ async fn main() {
     let endpoints = vec![
         "public/spot",
         "public/linear",
-        // Uncomment below as needed
-        // "public/inverse",
-        // "public/option",
-        // "private",
+        "public/inverse",
+        "public/option",
+        "private",
     ];
 
     // Setup Broadcast channel to disseminate messages to multiple listeners

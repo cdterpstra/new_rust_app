@@ -19,3 +19,5 @@ serde_json = "1.0.109"
 chrono = { version = "0.4.31", features = [] }
 colored = "2.0"
 crossbeam-channel = "0.5.10"
+serde = { version = "1.0.193", features = ["derive"] }
+unix-ts = "0.6.0"

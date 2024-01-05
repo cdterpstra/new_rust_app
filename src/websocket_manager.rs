@@ -1,3 +1,4 @@
+use colored::Colorize;
 // Import necessary crates and modules
 use crate::common::{BroadcastMessage, StartPingMessage, Status, SubscriptionMessage};
 use futures_util::{SinkExt, StreamExt};
@@ -171,7 +172,7 @@ async fn listen_for_status(mut status_receiver: broadcast::Receiver<Status>, uri
             // Now filter based on the sending party
             match status.sending_party.as_ref() {
                 "pingmanager" => {
-                    debug!("Received pong status for: {} from {}", uri, status.endpoint_name);
+                    debug!("Received pong status for: {} from {}", uri, status.endpoint_name.green());
                 }
                 "subscription_manager" => {
                     debug!("Received subscription status for: {} from {}", uri, status.endpoint_name);

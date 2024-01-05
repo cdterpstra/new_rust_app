@@ -517,10 +517,12 @@ dependencies = [
  "log",
  "pin-utils",
  "rand",
+ "serde",
  "serde_json",
  "time",
  "tokio",
  "tokio-tungstenite",
+ "unix-ts",
  "uuid",
 ]
 
@@ -685,6 +687,12 @@ checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
 ]
+
+[[package]]
+name = "readme-rustdocifier"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08ad765b21a08b1a8e5cdce052719188a23772bcbefb3c439f0baaf62c56ceac"
 
 [[package]]
 name = "redox_syscall"
@@ -1035,6 +1043,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c5713f0fc4b5db668a2ac63cdb7bb4469d8c9fed047b1d0292cc7b0ce2ba921"
 dependencies = [
  "tinyvec",
+]
+
+[[package]]
+name = "unix-ts"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a4f7e2a0ec19e18b93b3801b5271311f8f924527df3775067e039a488e48965"
+dependencies = [
+ "readme-rustdocifier",
+ "unix-ts-macros",
+]
+
+[[package]]
+name = "unix-ts-macros"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "778a90a350e66d5df234e112037b7e67733e31db6d5cc280e7812a58b5088848"
+dependencies = [
+ "readme-rustdocifier",
 ]
 
 [[package]]

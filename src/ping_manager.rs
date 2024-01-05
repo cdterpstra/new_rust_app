@@ -229,14 +229,14 @@ mock! {
 }
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
     use super::*;
-    use std::env;
     use tokio::sync::{broadcast, mpsc};
 
 
     #[tokio::test]
     async fn test_initial_ping_message() {
-        env::set_var("RUST_LOG", "debug");
+        // env::set_var("RUST_LOG", "trace");
         let _ = env_logger::builder().is_test(true).try_init();
 
         debug!("Setting up test.");
@@ -269,7 +269,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_verify_ping_message() {
-        env::set_var("RUST_LOG", "debug");
+        // env::set_var("RUST_LOG", "debug");
         let _ = env_logger::builder().is_test(true).try_init();
 
         debug!("Setting up test.");
@@ -284,7 +284,7 @@ mod tests {
             broadcaster: broadcaster_tx.subscribe(),
             status_sender: status_tx,
         };
-
+        let start = Instant::now();
         // Act
         spawn(async move {
             ping_task.start_pinging().await;
@@ -300,6 +300,9 @@ mod tests {
         }
         if let Some(msg) = rx.recv().await {
             assert!(matches!(msg, Message::Text(ref text) if text.contains("ping")));
+            // Check the elapsed time
+            let elapsed = start.elapsed();
+            assert!(elapsed.as_secs() < 20, "More than 20 seconds elapsed between messages");
             debug!("Received 2nd message: {:?}", msg);
             // Assertions...
         } else {

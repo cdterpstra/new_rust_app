@@ -1,6 +1,6 @@
 use colored::Colorize;
 // Import necessary crates and modules
-use crate::common::{BroadcastMessage, StartPingMessage, Status, SubscriptionMessage};
+use crate::common::{BroadcastMessage, StartTaskMessage, Status};
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error, info};
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -31,8 +31,8 @@ fn create_start_ping_message(
     endpoint_name: &str,
     timestamp: u128,
     ws_sender: mpsc::Sender<Message>,
-) -> StartPingMessage {
-    StartPingMessage {
+) -> StartTaskMessage {
+    StartTaskMessage {
         timestamp,
         endpoint_name: endpoint_name.to_owned(),
         ws_sender,
@@ -44,8 +44,8 @@ fn create_subscription_message(
     endpoint_name: &str,
     timestamp: u128,
     ws_sender: mpsc::Sender<Message>,
-) -> SubscriptionMessage {
-    SubscriptionMessage {
+) -> StartTaskMessage {
+    StartTaskMessage {
         timestamp,
         endpoint_name: endpoint_name.to_owned(),
         ws_sender,
@@ -61,9 +61,9 @@ fn create_subscription_message(
 async fn manage_connection(
     uri: String,
     global_broadcaster: broadcast::Sender<BroadcastMessage>,
-    ping_sender: mpsc::Sender<StartPingMessage>,
+    ping_sender: mpsc::Sender<StartTaskMessage>,
     status_receiver: broadcast::Receiver<Status>,
-    subscription_sender: mpsc::Sender<SubscriptionMessage>,
+    subscription_sender: mpsc::Sender<StartTaskMessage>,
 ) {
     let mut retry_delay = 1;
     let mut rng = StdRng::from_entropy();
@@ -108,8 +108,8 @@ async fn handle_websocket_stream<S>(
     ws_stream: WebSocketStream<S>,
     uri: &String,
     global_broadcaster: &broadcast::Sender<BroadcastMessage>,
-    ping_sender: &mpsc::Sender<StartPingMessage>,
-    subscription_sender: &mpsc::Sender<SubscriptionMessage>,
+    ping_sender: &mpsc::Sender<StartTaskMessage>,
+    subscription_sender: &mpsc::Sender<StartTaskMessage>,
 )
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -201,9 +201,9 @@ pub async fn websocket_manager(
     base_url: &str,
     endpoints: Vec<&str>,
     global_broadcaster: broadcast::Sender<BroadcastMessage>,
-    ping_sender: mpsc::Sender<StartPingMessage>,
+    ping_sender: mpsc::Sender<StartTaskMessage>,
     status_receiver: broadcast::Receiver<Status>,
-    subscription_sender: mpsc::Sender<SubscriptionMessage>,
+    subscription_sender: mpsc::Sender<StartTaskMessage>,
 ) {
     debug!("Initializing WebSocket manager");
     for endpoint in endpoints.iter() {

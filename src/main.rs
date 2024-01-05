@@ -12,7 +12,7 @@ mod subscription_manager;
 // ====================
 // External Library Imports
 // ====================
-use crate::common::{BroadcastMessage, Status, StartPingMessage, SubscriptionMessage};
+use crate::common::{BroadcastMessage, Status, StartTaskMessage};
 use crate::ping_manager::ping_manager;
 use crate::subscription_manager::subscription_manager;
 use crate::websocket_manager::websocket_manager;
@@ -43,9 +43,9 @@ async fn main() {
     let (broadcaster, _) = broadcast::channel::<BroadcastMessage>(16);
 
     // Setup channels for ping and subscription requests and internal broadcasting
-    let (ping_request_sender, ping_request_receiver) = mpsc::channel::<StartPingMessage>(100);
-    let (subscription_request_sender, subscription_request_receiver) = mpsc::channel::<SubscriptionMessage>(100);
-    let (internalbroadcaster, _) = broadcast::channel::<Status>(100);
+    let (ping_request_sender, ping_request_receiver) = mpsc::channel::<StartTaskMessage>(100);
+    let (subscription_request_sender, subscription_request_receiver) = mpsc::channel::<StartTaskMessage>(100);
+    let (internal_broadcaster, _) = broadcast::channel::<Status>(100);
 
     // ====================
     // Service Initialization Section
@@ -55,14 +55,14 @@ async fn main() {
     tokio::spawn(ping_manager(
         ping_request_receiver,
         broadcaster.subscribe(),
-        internalbroadcaster.clone(),
+        internal_broadcaster.clone(),
     ));
 
     // Start the subscription manager to handle subscription messages
     tokio::spawn(subscription_manager(
         subscription_request_receiver,
         broadcaster.subscribe(),
-        internalbroadcaster.clone(),
+        internal_broadcaster.clone(),
     ));
 
     // Start the listener to handle incoming broadcast messages
@@ -75,7 +75,7 @@ async fn main() {
         endpoints,
         broadcaster,
         ping_request_sender,
-        internalbroadcaster.subscribe(),
+        internal_broadcaster.subscribe(),
         subscription_request_sender,
     )
         .await;

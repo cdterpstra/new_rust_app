@@ -1,5 +1,5 @@
 // Import necessary crates and modules
-use crate::common::{BroadcastMessage, StartPingMessage, Status};
+use crate::common::{BroadcastMessage, ManageTask, StartTaskMessage, Status};
 use chrono::{Duration, TimeZone, Utc};
 use log::{debug, error, info, trace};
 use mockall::mock;
@@ -7,28 +7,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::io::Error;
 use tokio::sync::broadcast::{Receiver, Sender};
-use tokio::sync::{mpsc};
+use tokio::sync::mpsc;
 use tokio::{spawn, time};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use uuid::Uuid;
 
-// Structs and Implementations Section
 
 /// Represents a task for sending periodic ping messages
-#[derive(Debug)]
-struct PingTask {
-    endpoint_name: String,
-    ws_sender: mpsc::Sender<Message>,
-    broadcaster: Receiver<BroadcastMessage>,
-    status_sender: Sender<Status>,
-}
 
-impl PingTask {
+
+impl ManageTask {
     /// Starts the pinging process. This sends a ping message every 15 seconds
     /// and listens for pong messages to verify the connection status.
     async fn start_pinging(self) {
         let mut interval = time::interval(time::Duration::from_secs(15));
-        tokio::time::sleep(core::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(time::Duration::from_secs(1)).await;
         loop {
             interval.tick().await;
             let req_id = Uuid::new_v4().to_string();
@@ -66,16 +59,16 @@ impl PingTask {
 
 /// Manages incoming ping requests and spawns ping tasks accordingly
 pub async fn ping_manager(
-    mut ping_request_receiver: mpsc::Receiver<StartPingMessage>,
+    mut ping_request_receiver: mpsc::Receiver<StartTaskMessage>,
     broadcaster: Receiver<BroadcastMessage>,
-    internalbroadcaster: Sender<Status>,
+    internal_broadcaster: Sender<Status>,
 ) {
     while let Some(start_message) = ping_request_receiver.recv().await {
-        let ping_task = PingTask {
+        let ping_task = ManageTask {
             endpoint_name: start_message.endpoint_name,
             ws_sender: start_message.ws_sender,
             broadcaster: broadcaster.resubscribe(),
-            status_sender: internalbroadcaster.clone(),
+            status_sender: internal_broadcaster.clone(),
         };
         spawn(ping_task.start_pinging());
     }
@@ -104,7 +97,7 @@ async fn verify_pong(
                                     &endpoint_name,
                                     broadcast_msg.timestamp,
                                     "Ping/Pong: Connection healthy",
-                                    "pingmanager",
+                                    "ping_manager",
                                 )
                                 .await;
                                 debug!("Message: Connection healthy sent");
@@ -135,7 +128,7 @@ async fn verify_pong(
                                                 &endpoint_name,
                                                 broadcast_msg.timestamp,
                                                 "Ping/Pong: Connection healthy",
-                                                "pingmanager",
+                                                "ping_manager",
                                             )
                                             .await;
                                             debug!("Message: Connection healthy sent");
@@ -146,7 +139,7 @@ async fn verify_pong(
                                                 &endpoint_name,
                                                 broadcast_msg.timestamp,
                                                 "Ping/Pong: Timestamp older than 5 seconds",
-                                                "pingmanager",
+                                                "ping_manager",
                                             )
                                             .await;
                                             debug!("Message: Timestamp older than 5 seconds sent");
@@ -229,10 +222,9 @@ mock! {
 }
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
     use super::*;
+    use std::time::Instant;
     use tokio::sync::{broadcast, mpsc};
-
 
     #[tokio::test]
     async fn test_initial_ping_message() {
@@ -245,7 +237,7 @@ mod tests {
         let (status_tx, _) = broadcast::channel(5);
         let (broadcaster_tx, _) = broadcast::channel(1);
 
-        let ping_task = PingTask {
+        let ping_task = ManageTask {
             endpoint_name: "test_endpoint".to_string(),
             ws_sender: tx,
             broadcaster: broadcaster_tx.subscribe(),
@@ -278,7 +270,7 @@ mod tests {
         let (status_tx, mut status_rx) = broadcast::channel(5);
         let (broadcaster_tx, _) = broadcast::channel(1);
 
-        let ping_task = PingTask {
+        let ping_task = ManageTask {
             endpoint_name: "test_endpoint".to_string(),
             ws_sender: tx,
             broadcaster: broadcaster_tx.subscribe(),
@@ -302,7 +294,10 @@ mod tests {
             assert!(matches!(msg, Message::Text(ref text) if text.contains("ping")));
             // Check the elapsed time
             let elapsed = start.elapsed();
-            assert!(elapsed.as_secs() < 20, "More than 20 seconds elapsed between messages");
+            assert!(
+                elapsed.as_secs() < 20,
+                "More than 20 seconds elapsed between messages"
+            );
             debug!("Received 2nd message: {:?}", msg);
             // Assertions...
         } else {
@@ -332,7 +327,6 @@ mod tests {
         broadcaster_tx.send(broadcast_msg).unwrap();
 
         // Assert: Receive and check the status message
-        // Wait and receive the status message sent by verify_pong
         match status_rx.recv().await {
             Ok(received_msg) => {
                 assert!(

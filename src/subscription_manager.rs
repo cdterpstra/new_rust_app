@@ -1,5 +1,5 @@
 // Import necessary crates and modules
-use crate::common::{BroadcastMessage, Status, SubscriptionMessage};
+use crate::common::{BroadcastMessage, Status, StartTaskMessage, ManageTask};
 use log::{debug, error, info};
 use serde_json::{json, Value};
 use tokio::spawn;
@@ -13,19 +13,13 @@ use uuid::Uuid;
 // ===================================
 
 /// A task responsible for managing subscriptions
-#[derive(Debug)]
-struct SubscriptionTask {
-    endpoint_name: String,
-    ws_sender: mpsc::Sender<Message>,
-    broadcaster: Receiver<BroadcastMessage>,
-    subscription_status_sender: Sender<Status>,
-}
+
 
 // ===================================
 // == Implementations Section ==
 // ===================================
 
-impl SubscriptionTask {
+impl ManageTask {
     /// Starts the process of subscribing to a specific topic and verifying the subscription
     async fn start_subscribing(self) {
         // Construct subscription message with unique request ID
@@ -49,7 +43,7 @@ impl SubscriptionTask {
             self.broadcaster.resubscribe(),
             req_id.clone(),
             self.endpoint_name.clone(),
-            self.subscription_status_sender.clone(),
+            self.status_sender.clone(),
         )).await {
             error!("Verification task failed: {:?}", e);
         }
@@ -64,17 +58,17 @@ impl SubscriptionTask {
 
 /// Manages incoming subscription requests and spawns tasks to handle them
 pub async fn subscription_manager(
-    mut subscription_request_receiver: mpsc::Receiver<SubscriptionMessage>,
+    mut subscription_request_receiver: mpsc::Receiver<StartTaskMessage>,
     broadcaster: Receiver<BroadcastMessage>,
     internalbroadcaster: Sender<Status>,
 ) {
     while let Some(start_message) = subscription_request_receiver.recv().await {
         // Construct and spawn a new subscription task for each request
-        let subscription_task = SubscriptionTask {
+        let subscription_task = ManageTask {
             endpoint_name: start_message.endpoint_name,
             ws_sender: start_message.ws_sender,
             broadcaster: broadcaster.resubscribe(),
-            subscription_status_sender: internalbroadcaster.clone(),
+            status_sender: internalbroadcaster.clone(),
         };
         spawn(subscription_task.start_subscribing());
     }

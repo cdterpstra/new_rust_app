@@ -1,13 +1,13 @@
 // Import necessary crates and modules
-use std::io::Error;
-use mockall::mock;
-use chrono::{Duration, Utc, TimeZone};
 use crate::common::{BroadcastMessage, StartPingMessage, Status};
+use chrono::{Duration, TimeZone, Utc};
 use log::{debug, error, info, trace};
+use mockall::mock;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::io::Error;
 use tokio::sync::broadcast::{Receiver, Sender};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc};
 use tokio::{spawn, time};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use uuid::Uuid;
@@ -37,7 +37,7 @@ impl PingTask {
                 "args": null,
                 "req_id": req_id,
             })
-                .to_string();
+            .to_string();
 
             debug!("Sending ping message: {}", ping_message_json_string);
 
@@ -93,35 +93,62 @@ async fn verify_pong(
             match serde_json::from_str::<Operation>(text) {
                 Ok(operation) => {
                     match operation {
-                        Operation::ping { success, ret_msg: _, req_id } => {
+                        Operation::ping {
+                            success,
+                            ret_msg: _,
+                            req_id,
+                        } => {
                             if success && req_id == expected_req_id {
-                                send_status(&status_sender, &endpoint_name, broadcast_msg.timestamp, "Ping/Pong: Connection healthy", "pingmanager").await;
+                                send_status(
+                                    &status_sender,
+                                    &endpoint_name,
+                                    broadcast_msg.timestamp,
+                                    "Ping/Pong: Connection healthy",
+                                    "pingmanager",
+                                )
+                                .await;
                                 debug!("Message: Connection healthy sent");
                             }
-                        },
+                        }
                         Operation::pong { args } => {
                             // Assuming timestamp is properly extracted from args and is a string representing u128
                             if let Some(timestamp_str) = args.first() {
-                                debug!("Timestamp u128: {:?}",timestamp_str);
+                                debug!("Timestamp u128: {:?}", timestamp_str);
                                 if let Ok(timestamp) = timestamp_str.parse::<i128>() {
                                     // Convert the u128 timestamp to DateTime<Utc>
                                     debug!("Timestamp datetime: {}", timestamp);
-                                    if let Some(pong_time) = chrono::NaiveDateTime::from_timestamp_opt(
-                                        (timestamp / 1000) as i64,  // converts milliseconds to seconds
-                                        ((timestamp % 1000) * 1_000_000) as u32 // remainder as nanoseconds
-                                    ).map(|naive| Utc.from_utc_datetime(&naive)) {
-
+                                    if let Some(pong_time) =
+                                        chrono::NaiveDateTime::from_timestamp_opt(
+                                            (timestamp / 1000) as i64,               // converts milliseconds to seconds
+                                            ((timestamp % 1000) * 1_000_000) as u32, // remainder as nanoseconds
+                                        )
+                                        .map(|naive| Utc.from_utc_datetime(&naive))
+                                    {
                                         let current_time = Utc::now();
                                         let duration_since_pong = current_time - pong_time;
                                         debug!("Timestamp difference is curren_time: {} - pong_time {}", current_time, pong_time);
                                         debug!("Duration ms is: {}", duration_since_pong * 1000);
                                         if duration_since_pong <= Duration::milliseconds(200) {
                                             // Timestamp is within the last 5 seconds
-                                            send_status(&status_sender, &endpoint_name, broadcast_msg.timestamp, "Ping/Pong: Connection healthy", "pingmanager").await;
+                                            send_status(
+                                                &status_sender,
+                                                &endpoint_name,
+                                                broadcast_msg.timestamp,
+                                                "Ping/Pong: Connection healthy",
+                                                "pingmanager",
+                                            )
+                                            .await;
                                             debug!("Message: Connection healthy sent");
                                         } else {
                                             // Timestamp is older than 5 seconds
-                                            send_status(&status_sender, &endpoint_name, broadcast_msg.timestamp, "Ping/Pong: Timestamp older than 5 seconds", "pingmanager").await;
+                                            send_status(
+                                                &status_sender,
+                                                &endpoint_name,
+                                                broadcast_msg.timestamp,
+                                                "Ping/Pong: Timestamp older than 5 seconds",
+                                                "pingmanager",
+                                            )
+                                            .await;
                                             debug!("Message: Timestamp older than 5 seconds sent");
                                         }
                                     } else {
@@ -137,11 +164,8 @@ async fn verify_pong(
                                 error!("Args does not contain timestamp or is empty");
                             }
                         }
-
-
                     }
-
-                    },
+                }
                 Err(_e) => {
                     trace!("Received a non-targeted message, skipping.");
                 }
@@ -169,7 +193,10 @@ async fn send_status(
     if let Err(e) = status_sender.send(status_message) {
         error!("Failed to send status message: {:?}", e);
     } else {
-        debug!("Status message sent successfully for endpoint '{}'", endpoint_name);
+        debug!(
+            "Status message sent successfully for endpoint '{}'",
+            endpoint_name
+        );
     }
 }
 
@@ -202,18 +229,53 @@ mock! {
 }
 #[cfg(test)]
 mod tests {
-    use std::env;
     use super::*;
+    use std::env;
     use tokio::sync::{broadcast, mpsc};
+
 
     #[tokio::test]
     async fn test_initial_ping_message() {
         env::set_var("RUST_LOG", "debug");
-        env_logger::init();
+        let _ = env_logger::builder().is_test(true).try_init();
+
         debug!("Setting up test.");
         // Arrange
         let (tx, mut rx) = mpsc::channel(1);
-        let (status_tx, _) = broadcast::channel(1);
+        let (status_tx, _) = broadcast::channel(5);
+        let (broadcaster_tx, _) = broadcast::channel(1);
+
+        let ping_task = PingTask {
+            endpoint_name: "test_endpoint".to_string(),
+            ws_sender: tx,
+            broadcaster: broadcaster_tx.subscribe(),
+            status_sender: status_tx,
+        };
+
+        // Act
+        spawn(async move {
+            ping_task.start_pinging().await;
+        });
+
+        // Assert
+        if let Some(msg) = rx.recv().await {
+            // Inspect the message to ensure it's a ping with the right format
+            assert!(matches!(msg, Message::Text(ref text) if text.contains("ping")));
+            debug!("Received 1st ping message: {:?}", msg);
+        } else {
+            panic!("No message was sent!");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_verify_ping_message() {
+        env::set_var("RUST_LOG", "debug");
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        debug!("Setting up test.");
+        // Arrange
+        let (tx, mut rx) = mpsc::channel(1);
+        let (status_tx, mut status_rx) = broadcast::channel(5);
         let (broadcaster_tx, _) = broadcast::channel(1);
 
         let ping_task = PingTask {
@@ -244,7 +306,42 @@ mod tests {
             error!("No message was sent!");
             panic!("No message was sent!");
         }
+
+        // Simulate sending a pong message back through the broadcaster
+        let simulated_pong = json!({
+            "op": "pong",
+            "args": [Utc::now().timestamp_millis().to_string()] // Simulate current timestamp
+        })
+        .to_string();
+
+        debug!("pong response: {:?}", simulated_pong);
+
+        let broadcast_msg = BroadcastMessage {
+            message: Message::Text(simulated_pong.clone()), // Assuming you've corrected the alias or type as previously discussed
+            timestamp: Utc::now().timestamp_millis() as u128,
+            endpoint_name: "test_endpoint".to_string(),
+        };
+
+        // Log the message before sending
+        debug!("Broadcasting pong message: {:?}", broadcast_msg);
+
+        // Send the message
+        broadcaster_tx.send(broadcast_msg).unwrap();
+
+        // Assert: Receive and check the status message
+        // Wait and receive the status message sent by verify_pong
+        match status_rx.recv().await {
+            Ok(received_msg) => {
+                assert!(
+                    received_msg.message.contains("healthy"),
+                    "The status message does not indicate a healthy connection."
+                );
+                debug!(
+                    "Received status message indicating a healthy connection: {:?}",
+                    received_msg
+                );
+            }
+            Err(e) => panic!("Failed to receive status message: {:?}", e),
+        }
     }
-
 }
-

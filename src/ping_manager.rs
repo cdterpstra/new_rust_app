@@ -1,4 +1,6 @@
 // Import necessary crates and modules
+use std::io::Error;
+use mockall::mock;
 use chrono::{Duration, Utc, TimeZone};
 use crate::common::{BroadcastMessage, StartPingMessage, Status};
 use log::{debug, error, info, trace};
@@ -26,6 +28,7 @@ impl PingTask {
     /// and listens for pong messages to verify the connection status.
     async fn start_pinging(self) {
         let mut interval = time::interval(time::Duration::from_secs(15));
+        tokio::time::sleep(core::time::Duration::from_secs(1)).await;
         loop {
             interval.tick().await;
             let req_id = Uuid::new_v4().to_string();
@@ -183,3 +186,65 @@ enum Operation {
         args: Vec<String>,
     },
 }
+
+// Define the trait if not already defined
+pub trait MessageSender {
+    async fn send(&self, msg: Message) -> Result<(), Error>;
+}
+
+mock! {
+    Sender {}
+
+    // #[async_trait]
+    impl MessageSender<> for Sender {
+        async fn send(&self, msg: Message) -> Result<(), Error>;
+    }
+}
+#[cfg(test)]
+mod tests {
+    use std::env;
+    use super::*;
+    use tokio::sync::{broadcast, mpsc};
+
+    #[tokio::test]
+    async fn test_initial_ping_message() {
+        env::set_var("RUST_LOG", "debug");
+        env_logger::init();
+        debug!("Setting up test.");
+        // Arrange
+        let (tx, mut rx) = mpsc::channel(1);
+        let (status_tx, _) = broadcast::channel(1);
+        let (broadcaster_tx, _) = broadcast::channel(1);
+
+        let ping_task = PingTask {
+            endpoint_name: "test_endpoint".to_string(),
+            ws_sender: tx,
+            broadcaster: broadcaster_tx.subscribe(),
+            status_sender: status_tx,
+        };
+
+        // Act
+        spawn(async move {
+            ping_task.start_pinging().await;
+        });
+
+        // Assert
+        if let Some(msg) = rx.recv().await {
+            // Inspect the message to ensure it's a ping with the right format
+            assert!(matches!(msg, Message::Text(ref text) if text.contains("ping")));
+            debug!("Received 1st ping message: {:?}", msg);
+        } else {
+            panic!("No message was sent!");
+        }
+        if let Some(msg) = rx.recv().await {
+            assert!(matches!(msg, Message::Text(ref text) if text.contains("ping")));
+            debug!("Received 2nd message: {:?}", msg);
+            // Assertions...
+        } else {
+            error!("No message was sent!");
+            panic!("No message was sent!");
+        }
+    }
+
+}
+

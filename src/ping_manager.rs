@@ -12,9 +12,7 @@ use tokio::{spawn, time};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use uuid::Uuid;
 
-
 /// Represents a task for sending periodic ping messages
-
 
 impl ManageTask {
     /// Starts the pinging process. This sends a ping message every 15 seconds
@@ -223,6 +221,8 @@ mock! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
+    use std::env;
     use std::time::Instant;
     use tokio::sync::{broadcast, mpsc};
 
@@ -251,16 +251,36 @@ mod tests {
 
         // Assert
         if let Some(msg) = rx.recv().await {
-            // Inspect the message to ensure it's a ping with the right format
-            assert!(matches!(msg, Message::Text(ref text) if text.contains("ping")));
-            debug!("Received 1st ping message: {:?}", msg);
+            if let Message::Text(text) = msg {
+                // Parse the text to a JSON Value
+                if let Ok(parsed) = serde_json::from_str::<Value>(&text) {
+                    // Verify that the structure matches the expected format
+                    let is_correct_op = parsed.get("op").map_or(false, |op| op == "ping");
+                    let is_args_null = parsed.get("args").map_or(false, |args| args.is_null());
+                    let is_req_id_valid = if let Some(req_id) = parsed.get("req_id") {
+                        // Check if req_id is a valid UUID format
+                        Uuid::parse_str(req_id.as_str().unwrap_or("")).is_ok()
+                    } else {
+                        false
+                    };
+
+                    // Assert that all conditions are true
+                    assert!(is_correct_op, "The 'op' field must be 'ping'");
+                    assert!(is_args_null, "The 'args' field must be null");
+                    assert!(is_req_id_valid, "The 'req_id' field must be a valid UUID");
+                } else {
+                    panic!("Failed to parse message text to JSON");
+                }
+            } else {
+                panic!("Received a non-text message when a text message was expected");
+            }
         } else {
-            panic!("No message was sent!");
+            panic!("No message received");
         }
     }
 
     #[tokio::test]
-    async fn test_verify_ping_message() {
+    async fn test_verify_time_between_ping() {
         // env::set_var("RUST_LOG", "debug");
         let _ = env_logger::builder().is_test(true).try_init();
 
@@ -284,9 +304,14 @@ mod tests {
 
         // Assert
         if let Some(msg) = rx.recv().await {
-            // Inspect the message to ensure it's a ping with the right format
+            // Check the elapsed time
             assert!(matches!(msg, Message::Text(ref text) if text.contains("ping")));
-            debug!("Received 1st ping message: {:?}", msg);
+            let elapsed = start.elapsed();
+            assert!(
+                elapsed.as_millis() > 1000 && elapsed.as_millis() < 1005,
+                "More then 1000 milliseconds and Less than 1005 milliseconds to send first message"
+            );
+            debug!("Time elapsed first ping: {:?}", elapsed.as_millis());
         } else {
             panic!("No message was sent!");
         }
@@ -295,13 +320,11 @@ mod tests {
             // Check the elapsed time
             let elapsed = start.elapsed();
             assert!(
-                elapsed.as_secs() < 20,
-                "More than 20 seconds elapsed between messages"
+                elapsed.as_secs() > 14 && elapsed.as_secs() < 20,
+                "More then 15 seconds and less than 20 seconds elapsed between messages"
             );
-            debug!("Received 2nd message: {:?}", msg);
-            // Assertions...
+            debug!("Time elapsed second ping: {:?}", elapsed.as_millis());
         } else {
-            error!("No message was sent!");
             panic!("No message was sent!");
         }
 
@@ -337,6 +360,195 @@ mod tests {
                     "Received status message indicating a healthy connection: {:?}",
                     received_msg
                 );
+            }
+            Err(e) => panic!("Failed to receive status message: {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_verify_option_pong_received() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        debug!("Setting up test.");
+        // Arrange
+        let (tx, mut rx) = mpsc::channel(1);
+        let (status_tx, mut status_rx) = broadcast::channel(5);
+        let (broadcaster_tx, _) = broadcast::channel(1);
+
+        let ping_task = ManageTask {
+            endpoint_name: "test_endpoint".to_string(),
+            ws_sender: tx,
+            broadcaster: broadcaster_tx.subscribe(),
+            status_sender: status_tx,
+        };
+
+        // Act
+        spawn(async move {
+            ping_task.start_pinging().await;
+        });
+
+        // Assert
+        if let Some(msg) = rx.recv().await {
+            // Check the elapsed time
+            assert!(matches!(msg, Message::Text(ref text) if text.contains("ping")));
+        } else {
+            panic!("No message was sent!");
+        }
+
+        // Simulate sending a pong message back through the broadcaster
+        let simulated_pong = json!({
+            "op": "pong",
+            "args": [Utc::now().timestamp_millis().to_string()] // Simulate current timestamp
+        })
+        .to_string();
+
+        debug!("pong response: {:?}", simulated_pong);
+        let timestamp = Utc::now().timestamp_millis() as u128;
+        let broadcast_msg = BroadcastMessage {
+            message: Message::Text(simulated_pong.clone()),
+            timestamp,
+            endpoint_name: "test_endpoint".to_string(),
+        };
+
+        // Log the message before sending
+        debug!("Broadcasting pong message: {:?}", broadcast_msg);
+
+        // Send the message
+        broadcaster_tx.send(broadcast_msg).unwrap();
+
+        // Assert: Receive and check the status message
+        match status_rx.recv().await {
+            Ok(received_msg) => {
+                // Assuming you have expected values for these variables
+                let expected_endpoint_name = "test_endpoint".to_string(); // replace with actual expected value
+                let expected_timestamp = timestamp; // replace with actual expected value or a reasonable range
+                let expected_message = "Ping/Pong: Connection healthy".to_string(); // replace with actual expected value
+                let expected_sending_party = "ping_manager".to_string(); // replace with actual expected value
+
+                assert_eq!(
+                    received_msg.endpoint_name, expected_endpoint_name,
+                    "The endpoint name of the status message does not match."
+                );
+                // Note: For timestamp you might want to assert a range if it's based on the current time
+                assert_eq!(
+                    received_msg.timestamp, expected_timestamp,
+                    "The timestamp of the status message does not match."
+                );
+                assert_eq!(
+                    received_msg.message, expected_message,
+                    "The content of the status message does not match."
+                );
+                assert_eq!(
+                    received_msg.sending_party, expected_sending_party,
+                    "The sending party of the status message does not match."
+                );
+
+                debug!("Received status message as expected: {:?}", received_msg);
+            }
+            Err(e) => panic!("Failed to receive status message: {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    #[allow(unused_assignments)]
+    async fn test_verify_spot_linear_inverse_pong_received() {
+        env::set_var("RUST_LOG", "trace");
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        debug!("Setting up test.");
+        // Arrange
+        let (tx, mut rx) = mpsc::channel(1);
+        let (status_tx, mut status_rx) = broadcast::channel(5);
+        let (broadcaster_tx, _) = broadcast::channel(1);
+
+        let ping_task = ManageTask {
+            endpoint_name: "test_endpoint".to_string(),
+            ws_sender: tx,
+            broadcaster: broadcaster_tx.subscribe(),
+            status_sender: status_tx,
+        };
+
+        // Act
+        spawn(async move {
+            ping_task.start_pinging().await;
+        });
+
+        let mut captured_req_id = String::new();
+
+        // Assert and parse UUID
+        if let Some(msg) = rx.recv().await {
+            if let Message::Text(text) = msg {
+                if let Ok(parsed) = serde_json::from_str::<Value>(&text) {
+                    if let Some(req_id) = parsed["req_id"].as_str() {
+                        // Capture the req_id for later use
+                        captured_req_id = req_id.to_string();
+                        // Check if it's a ping message and contains the correct req_id
+                        assert!(text.contains("ping"), "Message does not contain 'ping'");
+                    } else {
+                        panic!("req_id not found or not a string");
+                    }
+                } else {
+                    panic!("Failed to parse message text to JSON");
+                }
+            } else {
+                panic!("Received a non-text message when a text message was expected");
+            }
+        } else {
+            panic!("No message was received!");
+        }
+
+        // Simulate sending a pong message back through the broadcaster
+        let simulated_pong = json!({
+        "success": true,
+        "ret_msg": "pong",
+        "conn_id": "0970e817-426e-429a-a679-ff7f55e0b16a",
+        "op": "ping",
+        "req_id": captured_req_id,
+        })
+        .to_string();
+
+        debug!("pong response: {:?}", simulated_pong);
+        let timestamp = Utc::now().timestamp_millis() as u128;
+        let broadcast_msg = BroadcastMessage {
+            message: Message::Text(simulated_pong.clone()),
+            timestamp,
+            endpoint_name: "test_endpoint".to_string(),
+        };
+
+        // Log the message before sending
+        debug!("Broadcasting pong message: {:?}", broadcast_msg);
+
+        // Send the message
+        broadcaster_tx.send(broadcast_msg).unwrap();
+
+        // Assert: Receive and check the status message
+        match status_rx.recv().await {
+            Ok(received_msg) => {
+                // Assuming you have expected values for these variables
+                let expected_endpoint_name = "test_endpoint".to_string(); // replace with actual expected value
+                let expected_timestamp = timestamp; // replace with actual expected value or a reasonable range
+                let expected_message = "Ping/Pong: Connection healthy".to_string(); // replace with actual expected value
+                let expected_sending_party = "ping_manager".to_string(); // replace with actual expected value
+
+                assert_eq!(
+                    received_msg.endpoint_name, expected_endpoint_name,
+                    "The endpoint name of the status message does not match."
+                );
+                // Note: For timestamp you might want to assert a range if it's based on the current time
+                assert_eq!(
+                    received_msg.timestamp, expected_timestamp,
+                    "The timestamp of the status message does not match."
+                );
+                assert_eq!(
+                    received_msg.message, expected_message,
+                    "The content of the status message does not match."
+                );
+                assert_eq!(
+                    received_msg.sending_party, expected_sending_party,
+                    "The sending party of the status message does not match."
+                );
+
+                debug!("Received status message as expected: {:?}", received_msg);
             }
             Err(e) => panic!("Failed to receive status message: {:?}", e),
         }

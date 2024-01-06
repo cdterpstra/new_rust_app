@@ -620,4 +620,109 @@ mod tests {
             Err(e) => panic!("Failed to receive status message: {:?}", e),
         }
     }
+
+    #[tokio::test]
+    #[allow(unused_assignments)]
+    async fn test_verify_private_pong_received() {
+        // initialize_logger();
+        env::set_var("RUST_LOG", "trace");
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        debug!("Setting up test.");
+        // Arrange
+        let (tx, mut rx) = mpsc::channel(1);
+        let (status_tx, mut status_rx) = broadcast::channel(5);
+        let (broadcaster_tx, _) = broadcast::channel(1);
+
+        let ping_task = ManageTask {
+            endpoint_name: "test_endpoint".to_string(),
+            ws_sender: tx,
+            broadcaster: broadcaster_tx.subscribe(),
+            status_sender: status_tx,
+        };
+
+        // Act
+        spawn(async move {
+            ping_task.start_pinging().await;
+        });
+
+        let mut captured_req_id = String::new();
+
+        // Assert and parse UUID
+        if let Some(msg) = rx.recv().await {
+            if let Message::Text(text) = msg {
+                if let Ok(parsed) = serde_json::from_str::<Value>(&text) {
+                    if let Some(req_id) = parsed["req_id"].as_str() {
+                        // Capture the req_id for later use
+                        captured_req_id = req_id.to_string();
+                        // Check if it's a ping message and contains the correct req_id
+                        assert!(text.contains("ping"), "Message does not contain 'ping'");
+                    } else {
+                        panic!("req_id not found or not a string");
+                    }
+                } else {
+                    panic!("Failed to parse message text to JSON");
+                }
+            } else {
+                panic!("Received a non-text message when a text message was expected");
+            }
+        } else {
+            panic!("No message was received!");
+        }
+
+        // Simulate sending a pong message back through the broadcaster
+        let simulated_pong = json!({
+        "conn_id": "0970e817-426e-429a-a679-ff7f55e0b16a",
+        "op": "pong",
+        "req_id": captured_req_id,
+            "args": [Utc::now().timestamp_millis().to_string()]
+        })
+            .to_string();
+
+        debug!("pong response: {:?}", simulated_pong);
+        let timestamp = Utc::now().timestamp_millis() as u128;
+        let broadcast_msg = BroadcastMessage {
+            message: Message::Text(simulated_pong.clone()),
+            timestamp,
+            endpoint_name: "test_endpoint".to_string(),
+        };
+
+        // Log the message before sending
+        debug!("Broadcasting pong message: {:?}", broadcast_msg);
+
+        // Send the message
+        broadcaster_tx.send(broadcast_msg).unwrap();
+
+        // Assert: Receive and check the status message
+        match status_rx.recv().await {
+            Ok(received_msg) => {
+                // Assuming you have expected values for these variables
+                let expected_endpoint_name = "test_endpoint".to_string(); // replace with actual expected value
+                let expected_timestamp = timestamp; // replace with actual expected value or a reasonable range
+                let expected_message = "Ping/Pong: Connection healthy".to_string(); // replace with actual expected value
+                let expected_sending_party = "ping_manager".to_string(); // replace with actual expected value
+
+                assert_eq!(
+                    received_msg.endpoint_name, expected_endpoint_name,
+                    "The endpoint name of the status message does not match."
+                );
+                // Note: For timestamp you might want to assert a range if it's based on the current time
+                assert_eq!(
+                    received_msg.timestamp, expected_timestamp,
+                    "The timestamp of the status message does not match."
+                );
+                assert_eq!(
+                    received_msg.message, expected_message,
+                    "The content of the status message does not match."
+                );
+                assert_eq!(
+                    received_msg.sending_party, expected_sending_party,
+                    "The sending party of the status message does not match."
+                );
+
+                debug!("Received status message as expected: {:?}", received_msg);
+            }
+            Err(e) => panic!("Failed to receive status message: {:?}", e),
+        }
+    }
 }

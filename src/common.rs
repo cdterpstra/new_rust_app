@@ -10,6 +10,12 @@ pub struct BroadcastMessage {
     pub endpoint_name: String,
     pub message: Message,
 }
+#[derive(Debug)]
+pub struct BroadcastMessageFout {
+    pub timestamp: String,
+    pub endpoint_name: String,
+    pub message: Message,
+}
 
 #[derive(Debug, Clone)]
 pub struct StartTaskMessage {
@@ -31,5 +37,13 @@ pub struct ManageTask {
     pub endpoint_name: String,
     pub ws_sender: mpsc::Sender<Message>,
     pub broadcaster: Receiver<BroadcastMessage>,
+    pub status_sender: Sender<Status>,
+}
+
+#[derive(Debug)]
+pub struct ManageTaskFout {
+    pub endpoint_name: String,
+    pub ws_sender: mpsc::Sender<Message>,
+    pub broadcaster: Receiver<BroadcastMessageFout>,
     pub status_sender: Sender<Status>,
 }

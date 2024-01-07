@@ -15,7 +15,7 @@ use colored::Colorize;
 pub async fn start_pinging(mut write: mpsc::Sender<MyMessage>, mut read: mpsc::Receiver<MyMessage>, uri: String) {
     info!("Starting pinging task for uri: {}", uri);
 
-    let mut interval = time::interval(Duration::from_secs(3));
+    let mut interval = time::interval(Duration::from_secs(15));
 
     while let _ = interval.tick().await {
         let req_id = Uuid::new_v4().to_string();

@@ -64,38 +64,49 @@ async fn verify_pong(
     read: &mut mpsc::Receiver<MyMessage>,
     expected_req_id: &str,
 ) -> Result<(), String> {
-    // Attempt to receive a single message
-    if let Some(my_message) = read.recv().await {
-        if let Message::Text(json_text) = my_message.message {
-            let data = match serde_json::from_str::<Value>(&json_text) {
-                Ok(data) => data,
-                Err(e) => {
-                    // Error parsing JSON; return an error immediately
-                    error!("Failed to parse JSON: {}", e);
-                    return Err("Failed to parse JSON".to_string());
-                }
-            };
+    // Set the timeout duration
+    let timeout_duration = Duration::from_secs(5);
 
-            let op = data["op"].as_str().unwrap_or_default();
-            match op {
-                // Handle 'ping' message type
-                "ping" => return handle_spot_inverse_linear(&data, expected_req_id),
-                // Handle 'pong' message type
-                "pong" => return handle_pong(&data, expected_req_id),
-                // Log and ignore non-pong or non-ping messages, but continue to next iteration
-                _ => trace!("Received a non-pong or non-ping message, skipping."),
+    // Wait for a message or timeout
+    let res = time::timeout(timeout_duration, read.recv()).await;
+
+    match res {
+        Ok(Some(my_message)) => {
+            if let Message::Text(json_text) = my_message.message {
+                let data = match serde_json::from_str::<Value>(&json_text) {
+                    Ok(data) => data,
+                    Err(e) => {
+                        // Error parsing JSON; return an error immediately
+                        error!("Failed to parse JSON: {}", e);
+                        return Err("Failed to parse JSON".to_string());
+                    }
+                };
+
+                let op = data["op"].as_str().unwrap_or_default();
+                match op {
+                    "ping" => return handle_spot_inverse_linear(&data, expected_req_id),
+                    "pong" => return handle_pong(&data, expected_req_id),
+                    _ => trace!("Received a non-pong or non-ping message, skipping."),
+                }
+            } else {
+                trace!("Received non-text message, skipping.");
             }
-        } else {
-            trace!("Received non-text message, skipping.");
+        },
+        Ok(None) => {
+            // Stream is closed
+            error!("Stream closed unexpectedly");
+            return Err("Stream closed unexpectedly".to_string());
+        },
+        Err(_) => {
+            // Timeout occurred
+            error!("Timeout waiting for message");
+            return Err("Timeout waiting for pong message".to_string());
         }
-    } else {
-        error!("Did not receive any more messages. Possibly disconnected.");
-        return Err("Failed to receive any pong messages".to_string());
     }
+
     // If no valid message is processed, continue waiting for next message or return a generic error
     Err("No valid pong response received".to_string())
 }
-
 
 // Handle Spot, Inverse, and Linear endpoint pings
 fn handle_spot_inverse_linear(data: &Value, expected_req_id: &str) -> Result<(), String> {

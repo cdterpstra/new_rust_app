@@ -112,7 +112,7 @@ pub async fn manage_connection(
 
                 // Creating channels for ping/pong message communication
                 let (ping_tx, mut ping_rx) = mpsc::channel::<MyMessage>(32);
-                let (pong_tx, mut pong_rx) = mpsc::channel::<MyMessage>(32);
+                let (pong_tx, pong_rx) = mpsc::channel::<MyMessage>(32);
                 debug!("Ping and Pong channels created");
 
                 let uri_clone = uri.clone();
@@ -125,7 +125,7 @@ pub async fn manage_connection(
                 });
 
                 debug!("Spawning task to write ping messages");
-                let write_task = spawn(async move {
+                let _write_task = spawn(async move {
                     while let Some(my_msg) = ping_rx.recv().await {
                         if let Err(e) = write.send(my_msg.message).await {
                             error!("Failed to send ping to WebSocket: {:?}", e);
@@ -135,9 +135,10 @@ pub async fn manage_connection(
                     }
                 });
 
+
                 let uri_for_async = uri.clone();
                 debug!("Spawning pinging task for {}", uri_for_async);
-                let ping_task = spawn(async move {
+                let _ping_task = spawn(async move {
                     start_pinging(ping_tx, pong_rx, uri_for_async).await;
                 });
 
@@ -172,33 +173,19 @@ pub async fn websocket_manager(
     debug!("Initializing WebSocket manager");
 
     // Create a channel for general messages
-    let (general_tx, general_rx) = mpsc::channel::<MyMessage>(32);
+    // let (general_tx, general_rx) = mpsc::channel::<MyMessage>(32);
 
     for endpoint in endpoints.iter() {
         let uri = format!("{}{}", base_url, endpoint);
 
         // Create individual channels for pong messages for each connection
-        let (pong_tx, pong_rx) = mpsc::channel(32);
+        let (pong_tx,_) = mpsc::channel(32);
 
-        let general_tx_clone = general_tx.clone();
+        // let _general_tx_clone = general_tx.clone();
 
         spawn(manage_connection(
             uri,
             pong_tx,
         ));
-
-        // Handle pong messages or other tasks specific to the connection here if needed
-        // ...
     }
-
-    // Here, you can listen to general_rx for incoming general messages
-    // and handle them as needed in your application
-    // while let Some(msg) = general_rx.recv().await {
-    //     // Handle general message
-    // }
 }
-
-// Your main function or other parts of your application would go here
-// async fn main() {
-//     // Initialize logging, WebSocket manager, or other components here.
-// }

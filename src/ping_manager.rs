@@ -8,10 +8,9 @@ use tokio::time::{self, Duration};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use uuid::Uuid;
 use crate::websocket_manager::MyMessage;
-use colored;
 use colored::Colorize;
 
-pub async fn start_pinging(mut write: mpsc::Sender<MyMessage>, mut read: mpsc::Receiver<MyMessage>, uri: String) {
+pub async fn start_pinging(write: mpsc::Sender<MyMessage>, mut read: mpsc::Receiver<MyMessage>, uri: String) {
     info!("Starting pinging task for uri: {}", uri);
 
     let mut interval = time::interval(Duration::from_secs(15));

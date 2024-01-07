@@ -1,115 +1,98 @@
-// // Import necessary crates and modules
-// use crate::common::{BroadcastMessage, Status, StartTaskMessage, ManageTask};
-// use log::{debug, error, info};
-// use serde_json::{json, Value};
-// use tokio::spawn;
-// use tokio::sync::broadcast::{Receiver, Sender};
-// use tokio::sync::mpsc;
-// use tokio_tungstenite::tungstenite::Message;
-// use uuid::Uuid;
-//
-// // ===================================
-// // == Struct Definition Section ==
-// // ===================================
-//
-// /// A task responsible for managing subscriptions
-//
-//
-// // ===================================
-// // == Implementations Section ==
-// // ===================================
-//
-// impl ManageTask {
-//     /// Starts the process of subscribing to a specific topic and verifying the subscription
-//     async fn start_subscribing(self) {
-//         // Construct subscription message with unique request ID
-//         let req_id = Uuid::new_v4().to_string();
-//         let subscription_message_json_string = json!({
-//             "req_id": req_id,
-//             "op": "subscribe",
-//             "args": ["tickers.BTCUSDT"]
-//         }).to_string();
-//
-//         debug!("Sending subscription message: {}", subscription_message_json_string);
-//
-//         // Attempt to send the subscription message
-//         if let Err(e) = self.ws_sender.send(Message::Text(subscription_message_json_string)).await {
-//             error!("Failed to send subscription: {:?}", e);
-//             return; // Return early if we can't send the subscription
-//         }
-//
-//         // Start verification process
-//         if let Err(e) = spawn(verify_subscription(
-//             self.broadcaster.resubscribe(),
-//             req_id.clone(),
-//             self.endpoint_name.clone(),
-//             self.status_sender.clone(),
-//         )).await {
-//             error!("Verification task failed: {:?}", e);
-//         }
-//
-//         info!("Subscription sent to {} with req_id {}", self.endpoint_name, req_id);
-//     }
-// }
-//
-// // ===================================
-// // == Async Functions Section ==
-// // ===================================
-//
-// /// Manages incoming subscription requests and spawns tasks to handle them
-// pub async fn subscription_manager(
-//     mut subscription_request_receiver: mpsc::Receiver<StartTaskMessage>,
-//     broadcaster: Receiver<BroadcastMessage>,
-//     internalbroadcaster: Sender<Status>,
-// ) {
-//     while let Some(start_message) = subscription_request_receiver.recv().await {
-//         // Construct and spawn a new subscription task for each request
-//         let subscription_task = ManageTask {
-//             endpoint_name: start_message.endpoint_name,
-//             ws_sender: start_message.ws_sender,
-//             broadcaster: broadcaster.resubscribe(),
-//             status_sender: internalbroadcaster.clone(),
-//         };
-//         spawn(subscription_task.start_subscribing());
-//     }
-// }
-//
-// /// Verifies the subscription response from the server to ensure connection health
-// async fn verify_subscription(
-//     mut broadcast_receiver: Receiver<BroadcastMessage>,
-//     expected_req_id: String,
-//     endpoint_name: String,
-//     status_sender: Sender<Status>,
-// ) {
-//     // Listen for broadcast messages to verify the subscription
-//     while let Ok(broadcast_msg) = broadcast_receiver.recv().await {
-//         if let Message::Text(text) = &broadcast_msg.message {
-//             match serde_json::from_str::<Value>(text) {
-//                 Ok(json) => {
-//                     // Handle successful parsing
-//                     if json["op"] == "subscribe" && json["req_id"] == expected_req_id && json["success"] == true {
-//                         info!("Valid subscription received for endpoint '{}' with req_id: {}", endpoint_name, expected_req_id);
-//
-//                         // Construct and send a status message indicating successful subscription
-//                         let subscription_message = Status {
-//                             endpoint_name: endpoint_name.clone(),
-//                             timestamp: broadcast_msg.timestamp,
-//                             message: "Subscription: Subscription Successful".to_string(),
-//                             sending_party: "subscription_manager".to_string(),
-//                         };
-//                         debug!("Attempting to send SubscriptionStatus message: {:?}", subscription_message);
-//                         if let Err(e) = status_sender.send(subscription_message) {
-//                             error!("Subscription: Subscription Unsuccessful {:?}", e);
-//                         } else {
-//                             debug!("Subscription message sent successfully for endpoint '{}'", endpoint_name);
-//                         }
-//                     }
-//                 }
-//                 Err(e) => {
-//                     // Log error if parsing fails
-//                     error!("Failed to parse incoming message as JSON: {:?}", e);
-//                 }
-//             }
-//         }
-//     }
-// }
+// Import necessary crates and modules
+use crate::websocket_manager::MyMessage;
+use log::{debug, error, info};
+use serde_json::{json, Value};
+use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::Message;
+use uuid::Uuid;
+
+pub async fn start_subscribing(
+    subscription_request_write: mpsc::Sender<MyMessage>,
+    mut subscription_response_read: mpsc::Receiver<MyMessage>,
+    uri: String,
+) {
+    let req_id = Uuid::new_v4().to_string();
+    debug!("Generated req_id {} for next subscription message", req_id);
+
+    let topics = vec!["tickers.BTCUSDT".to_string()];
+
+    let public_topics_subscribe_message = json!({
+        "req_id": req_id,
+        "op": "subscribe",
+        "args": topics
+    })
+        .to_string();
+
+    debug!(
+        "Constructed subscribe message: {}",
+        public_topics_subscribe_message
+    );
+
+    // Constructing a text WebSocket message
+    let subscribe_ws_message = Message::Text(public_topics_subscribe_message);
+
+    // Wrapping it into your MyMessage structure
+    let my_subscribe_message = MyMessage {
+        timestamp: chrono::Utc::now().timestamp_millis() as u128,
+        endpoint_name: uri.clone(),
+        message: subscribe_ws_message,
+    };
+
+    // Sending the message
+    if let Err(e) = subscription_request_write.send(my_subscribe_message).await {
+        error!("Failed to send subscribe for uri {}: {:?}", uri, e);
+        return; // Exiting function on send failure
+    }
+
+    // Verifying the subscription response
+    match verify_subscription(
+        &mut subscription_response_read,
+        &req_id,
+        &uri,
+    )
+        .await
+    {
+        Ok(_) => debug!("Successfully verified subscription response for uri: {}", uri),
+        Err(e) => {
+            error!("Failed to verify subscription for uri {}: {:?}", uri, e);
+            // Depending on the application logic, you might want to return, retry, or ignore errors here
+        }
+    }
+
+    info!("Subscription task ended for uri: {}", uri);
+}
+
+/// Verifies the subscription response from the server to ensure connection health
+async fn verify_subscription(
+    subscription_response_receiver: &mut mpsc::Receiver<MyMessage>,
+    req_id: &str,
+    uri: &str,
+) -> Result<(), String> {
+    // Listen for messages to verify the subscription
+    while let Some(subscription_response) = subscription_response_receiver.recv().await {
+        if let Message::Text(text) = subscription_response.message {
+            match serde_json::from_str::<Value>(&text) {
+                Ok(json) => {
+                    // Handle successful parsing
+                    if json["req_id"] == req_id && json["op"] == "subscribe" {
+                        // Check if subscription was successful here based on your application logic
+                        info!(
+                            "Valid subscription received for endpoint '{}' with req_id: {}",
+                            uri, req_id
+                        );
+                        return Ok(());
+                    } else {
+                        // Continue or return an error if the subscription wasn't successful
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    // Log error if parsing fails
+                    error!("Failed to parse incoming message as JSON: {:?}", e);
+                    // Handle or return an error as appropriate
+                }
+            }
+        }
+    }
+    Err("Failed to verify subscription or no more messages".to_string())
+}

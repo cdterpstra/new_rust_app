@@ -30,10 +30,10 @@ async fn main() {
     let base_url = "wss://stream-testnet.bybit.com/v5/";
     let endpoints = vec![
         "public/spot",
-        "public/linear",
-        "public/inverse",
-        "public/option",
-        "private",
+        // "public/linear",
+        // "public/inverse",
+        // "public/option",
+        // "private",
     ];
 
 
@@ -42,7 +42,7 @@ async fn main() {
     // ====================
 
     // Start the listener to handle incoming broadcast messages
-    // tokio::spawn(listener::listen_for_messages(listener_receiver));
+
 
     // Initialize and run the WebSocket manager for handling connections
     websocket_manager(

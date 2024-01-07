@@ -92,7 +92,7 @@ async fn forward_general_message(
     }
 }
 
-async fn manage_connection(
+pub async fn manage_connection(
     uri: String,
     general_tx: mpsc::Sender<MyMessage>,
 ) {
@@ -101,42 +101,52 @@ async fn manage_connection(
     debug!("Starting connection management for {}", uri);
 
     loop {
+        debug!("Attempting to connect to {}", uri);
         match connect_async(&uri).await {
             Ok((ws_stream, _)) => {
-                debug!("Connected to {}", uri);
-                retry_delay = 1;
+                debug!("Successfully connected to {}", uri);
+                retry_delay = 1; // Reset retry delay after successful connection
 
                 let (mut write, read) = ws_stream.split();
-                let (ping_tx, mut ping_rx) = mpsc::channel::<MyMessage>(32); // Channel for ping messages
-                let (pong_tx, mut pong_rx) = mpsc::channel::<MyMessage>(32); // Channel for pong messages
+                debug!("WebSocket stream split into write and read");
+
+                // Creating channels for ping/pong message communication
+                let (ping_tx, mut ping_rx) = mpsc::channel::<MyMessage>(32);
+                let (pong_tx, mut pong_rx) = mpsc::channel::<MyMessage>(32);
+                debug!("Ping and Pong channels created");
 
                 let uri_clone = uri.clone();
                 let pong_tx_clone = pong_tx.clone();
                 let general_tx_clone = general_tx.clone();
 
-                // Spawn the task for handling the WebSocket stream
+                debug!("Spawning task to handle WebSocket stream");
                 let handle_task = spawn(async move {
                     handle_websocket_stream(read, &uri_clone, pong_tx_clone, general_tx_clone).await;
                 });
 
-                // Task to write ping messages to the WebSocket
+                debug!("Spawning task to write ping messages");
                 let write_task = spawn(async move {
                     while let Some(my_msg) = ping_rx.recv().await {
                         if let Err(e) = write.send(my_msg.message).await {
                             error!("Failed to send ping to WebSocket: {:?}", e);
-                            break; // Handle error or break as needed
+                            // Log and/or handle error as needed
+                            break;
                         }
                     }
                 });
 
-                // Spawn the pinging task, which uses ping_tx to send pings
+                let uri_for_async = uri.clone();
+                debug!("Spawning pinging task for {}", uri_for_async);
                 let ping_task = spawn(async move {
-                    start_pinging(ping_tx, pong_rx).await;
+                    start_pinging(ping_tx, pong_rx, uri_for_async).await;
                 });
 
                 // Await the completion of the connection handling task
+                debug!("Awaiting the completion of WebSocket handling task for {}", uri);
                 let _ = handle_task.await;
-                // Consider handling write_task and ping_task as needed for your logic
+                debug!("WebSocket handling task completed for {}", uri);
+
+                // You might want to handle or await the completion of write_task and ping_task here
 
                 debug!("Connection lost to {}. Attempting to reconnect...", uri);
             }
@@ -149,8 +159,9 @@ async fn manage_connection(
         // Exponential backoff with jitter for reconnection attempts
         let jitter = rng.gen_range(0..6);
         let sleep_time = std::cmp::min(retry_delay, 1024) + jitter;
+        debug!("Waiting {} seconds before retrying connection to {}", sleep_time, uri);
         time::sleep(time::Duration::from_secs(sleep_time)).await;
-        retry_delay *= 2;
+        retry_delay *= 2; // Increase the delay for the next retry
     }
 }
 

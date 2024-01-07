@@ -11,13 +11,14 @@ use crate::websocket_manager::MyMessage;
 use colored;
 use colored::Colorize;
 
-
 pub async fn start_pinging(mut write: mpsc::Sender<MyMessage>, mut read: mpsc::Receiver<MyMessage>, uri: String) {
     info!("Starting pinging task for uri: {}", uri);
 
     let mut interval = time::interval(Duration::from_secs(15));
 
-    while let _ = interval.tick().await {
+    loop {
+        interval.tick().await; // Wait for the next interval tick
+
         let req_id = Uuid::new_v4().to_string();
         debug!("Generated req_id {} for next ping message", req_id);
 
@@ -52,13 +53,16 @@ pub async fn start_pinging(mut write: mpsc::Sender<MyMessage>, mut read: mpsc::R
         // Verifying the pong response
         match verify_pong(&mut read, &req_id).await {
             Ok(_) => debug!("Successfully verified pong response for uri: {}", uri),
-            Err(e) => error!("Failed to verify pong for uri {}: {:?}", uri, e),
-            // Depending on the application logic, you might want to break, retry, or ignore errors here
+            Err(e) => {
+                error!("Failed to verify pong for uri {}: {:?}", uri, e);
+                // Depending on the application logic, you might want to break, retry, or ignore errors here
+            }
         }
     }
 
     info!("Pinging task ended for uri: {}", uri);
 }
+
 /// Verify pong response from the server to ensure connection health
 async fn verify_pong(
     read: &mut mpsc::Receiver<MyMessage>,

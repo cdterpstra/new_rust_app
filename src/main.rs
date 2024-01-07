@@ -12,10 +12,9 @@ mod subscription_manager;
 // ====================
 // External Library Imports
 // ====================
-use crate::common::{BroadcastMessage};
+// use crate::common::{BroadcastMessage};
 use log::debug;
 use tokio::signal;
-use tokio::sync::broadcast;
 use crate::websocket_manager::websocket_manager;
 
 // ====================
@@ -37,20 +36,13 @@ async fn main() {
         "private",
     ];
 
-    // Setup Broadcast channel to disseminate messages to multiple listeners
-    let (broadcaster, _) = broadcast::channel::<BroadcastMessage>(16);
-
 
     // ====================
     // Service Initialization Section
     // ====================
 
-
-
-
     // Start the listener to handle incoming broadcast messages
-    let listener_receiver = broadcaster.subscribe(); // Receiver for the listener
-    tokio::spawn(listener::listen_for_messages(listener_receiver));
+    // tokio::spawn(listener::listen_for_messages(listener_receiver));
 
     // Initialize and run the WebSocket manager for handling connections
     websocket_manager(

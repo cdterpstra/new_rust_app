@@ -31,10 +31,10 @@ async fn main() {
     let base_url = "wss://stream-testnet.bybit.com/v5/";
     let endpoints = vec![
         "public/spot",
-        // "public/linear",
-        // "public/inverse",
-        // "public/option",
-        // "private",
+        "public/linear",
+        "public/inverse",
+        "public/option",
+        "private",
     ];
 
     // Setup Broadcast channel to disseminate messages to multiple listeners

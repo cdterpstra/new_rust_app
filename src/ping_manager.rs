@@ -1,3 +1,4 @@
+use std::env::args;
 // ping_manager.rs
 use serde_json::Value;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
@@ -9,6 +10,8 @@ use tokio::time::{self, Duration};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use uuid::Uuid;
 use crate::websocket_manager::MyMessage;
+use colored;
+use colored::Colorize;
 
 
 pub async fn start_pinging(mut write: mpsc::Sender<MyMessage>, mut read: mpsc::Receiver<MyMessage>) {
@@ -56,21 +59,90 @@ async fn verify_pong(
 ) -> Result<(), String> {
     while let Some(my_message) = read.recv().await {
         if let Message::Text(json_text) = my_message.message {
-            let v: Result<Value, _> = serde_json::from_str(&json_text);
-            match v {
+            match serde_json::from_str::<Value>(&json_text) {
                 Ok(data) => {
-                    if data["op"] == "ping" && data["ret_msg"] == "pong" && data["req_id"] == expected_req_id {
-                        debug!("Received pong message: {:?}", data);
-                        // Now validate the pong message
-                        if let Some(timestamp_str) = data["req_id"].as_str() {
-                            debug!("Pong success {:?}", timestamp_str);
-                            // ... further validation of the pong message ...
-                        } else {
-                            error!("Pong message does not contain timestamp");
-                            return Err("No timestamp in pong message".to_string());
+                    let op = data["op"].as_str().unwrap_or_default();
+
+                    match op {
+                        "ping" => {
+                            // Handling for Spot, Inverse, and Linear endpoints
+                            if data["ret_msg"] == "pong" && data["req_id"] == expected_req_id && data["success"].as_bool().unwrap_or(false) {
+                                debug!("{} {}", "Pong success from Spot, Inverse, or Linear endpoint:".green(), data.to_string().green());
+                            }
+                        },
+                        "pong" => {
+                            // Determine if it's a Private or Option endpoint pong message
+                            if data.get("req_id").map_or(false, |r| r == expected_req_id) {
+                                // Handle Private endpoint pong message
+                                if let Some(args) = data["args"].as_array() {
+                                    if let Some(timestamp_str) = args.first().and_then(|v| v.as_str()) {
+                                        if let Ok(timestamp) = timestamp_str.parse::<i128>() {
+                                            if let Some(pong_time) = NaiveDateTime::from_timestamp_opt(
+                                                (timestamp / 1000) as i64,
+                                                ((timestamp % 1000) * 1_000_000) as u32,
+                                            ).map(|naive| Utc.from_utc_datetime(&naive)) {
+                                                let current_time = Utc::now();
+                                                let duration_since_pong = current_time - pong_time;
+                                                debug!("Time difference: Current Time: {} - Pong Time: {} = Duration (ms): {}", current_time, pong_time, duration_since_pong.num_milliseconds());
+
+                                                if duration_since_pong <= chrono::Duration::milliseconds(200) {
+                                                    debug!("{} {}", "Pong message is timely and within 200ms for Private endpoint:".green(), data.to_string().green());
+                                                    return Ok(());
+                                                } else {
+                                                    error!("Pong message is too old. Connection might be unhealthy.");
+                                                    return Err("Timestamp too old".to_string());
+                                                }
+                                            } else {
+                                                error!("Failed to parse pong message's timestamp");
+                                                return Err("Failed to parse timestamp".to_string());
+                                            }
+                                        } else {
+                                            error!("Failed to parse pong message's timestamp");
+                                            return Err("Failed to parse timestamp".to_string());
+                                        }
+                                    } else {
+                                        error!("Pong message does not contain timestamp");
+                                        return Err("No timestamp in pong message".to_string());
+                                    }
+                                }
+                            } else {
+                                // Handle Option endpoint pong message
+                                if let Some(args) = data["args"].as_array() {
+                                    if let Some(timestamp_str) = args.first().and_then(|v| v.as_str()) {
+                                        if let Ok(timestamp) = timestamp_str.parse::<i128>() {
+                                            if let Some(pong_time) = NaiveDateTime::from_timestamp_opt(
+                                                (timestamp / 1000) as i64,
+                                                ((timestamp % 1000) * 1_000_000) as u32,
+                                            ).map(|naive| Utc.from_utc_datetime(&naive)) {
+                                                let current_time = Utc::now();
+                                                let duration_since_pong = current_time - pong_time;
+                                                debug!("Time difference: Current Time: {} - Pong Time: {} = Duration (ms): {}", current_time, pong_time, duration_since_pong.num_milliseconds());
+
+                                                if duration_since_pong <= chrono::Duration::milliseconds(200) {
+                                                    debug!("{} {}", "Pong message is timely and within 200ms for Option endpoint:".green(), data.to_string().green());
+                                                    return Ok(());
+                                                } else {
+                                                    error!("Pong message is too old. Connection might be unhealthy.");
+                                                    return Err("Timestamp too old".to_string());
+                                                }
+                                            } else {
+                                                error!("Failed to parse pong message's timestamp");
+                                                return Err("Failed to parse timestamp".to_string());
+                                            }
+                                        } else {
+                                            error!("Failed to parse pong message's timestamp");
+                                            return Err("Failed to parse timestamp".to_string());
+                                        }
+                                    } else {
+                                        error!("Pong message does not contain timestamp");
+                                        return Err("No timestamp in pong message".to_string());
+                                    }
+                                }
+                            }
+                        },
+                        _ => {
+                            trace!("Received a non-pong or non-ping message, skipping.");
                         }
-                    } else {
-                        trace!("Received a non-pong message, skipping.");
                     }
                 }
                 Err(e) => {

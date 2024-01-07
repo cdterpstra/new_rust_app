@@ -1,9 +1,7 @@
-use std::env::args;
 // ping_manager.rs
 use serde_json::Value;
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use log::{debug, error, trace};
-use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::time::{self, Duration};
@@ -75,7 +73,7 @@ async fn verify_pong(
                             if data.get("req_id").map_or(false, |r| r == expected_req_id) {
                                 // Handle Private endpoint pong message
                                 if let Some(args) = data["args"].as_array() {
-                                    if let Some(timestamp_str) = args.first().and_then(|v| v.as_str()) {
+                                    return if let Some(timestamp_str) = args.first().and_then(|v| v.as_str()) {
                                         if let Ok(timestamp) = timestamp_str.parse::<i128>() {
                                             if let Some(pong_time) = NaiveDateTime::from_timestamp_opt(
                                                 (timestamp / 1000) as i64,
@@ -87,28 +85,28 @@ async fn verify_pong(
 
                                                 if duration_since_pong <= chrono::Duration::milliseconds(200) {
                                                     debug!("{} {}", "Pong message is timely and within 200ms for Private endpoint:".green(), data.to_string().green());
-                                                    return Ok(());
+                                                    Ok(())
                                                 } else {
                                                     error!("Pong message is too old. Connection might be unhealthy.");
-                                                    return Err("Timestamp too old".to_string());
+                                                    Err("Timestamp too old".to_string())
                                                 }
                                             } else {
                                                 error!("Failed to parse pong message's timestamp");
-                                                return Err("Failed to parse timestamp".to_string());
+                                                Err("Failed to parse timestamp".to_string())
                                             }
                                         } else {
                                             error!("Failed to parse pong message's timestamp");
-                                            return Err("Failed to parse timestamp".to_string());
+                                            Err("Failed to parse timestamp".to_string())
                                         }
                                     } else {
                                         error!("Pong message does not contain timestamp");
-                                        return Err("No timestamp in pong message".to_string());
+                                        Err("No timestamp in pong message".to_string())
                                     }
                                 }
                             } else {
                                 // Handle Option endpoint pong message
                                 if let Some(args) = data["args"].as_array() {
-                                    if let Some(timestamp_str) = args.first().and_then(|v| v.as_str()) {
+                                    return if let Some(timestamp_str) = args.first().and_then(|v| v.as_str()) {
                                         if let Ok(timestamp) = timestamp_str.parse::<i128>() {
                                             if let Some(pong_time) = NaiveDateTime::from_timestamp_opt(
                                                 (timestamp / 1000) as i64,
@@ -120,22 +118,22 @@ async fn verify_pong(
 
                                                 if duration_since_pong <= chrono::Duration::milliseconds(200) {
                                                     debug!("{} {}", "Pong message is timely and within 200ms for Option endpoint:".green(), data.to_string().green());
-                                                    return Ok(());
+                                                    Ok(())
                                                 } else {
                                                     error!("Pong message is too old. Connection might be unhealthy.");
-                                                    return Err("Timestamp too old".to_string());
+                                                    Err("Timestamp too old".to_string())
                                                 }
                                             } else {
                                                 error!("Failed to parse pong message's timestamp");
-                                                return Err("Failed to parse timestamp".to_string());
+                                                Err("Failed to parse timestamp".to_string())
                                             }
                                         } else {
                                             error!("Failed to parse pong message's timestamp");
-                                            return Err("Failed to parse timestamp".to_string());
+                                            Err("Failed to parse timestamp".to_string())
                                         }
                                     } else {
                                         error!("Pong message does not contain timestamp");
-                                        return Err("No timestamp in pong message".to_string());
+                                        Err("No timestamp in pong message".to_string())
                                     }
                                 }
                             }

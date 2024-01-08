@@ -1,3 +1,4 @@
+use colored::Colorize;
 use crate::ping_manager::start_pinging;
 use crate::subscription_manager::start_subscribing;
 use futures_util::stream::SplitStream;
@@ -55,6 +56,7 @@ async fn handle_websocket_stream<S>(
             Ok(msg) => {
                 if let Message::Text(text) = msg {
                     // Parse message as a generic JSON Value
+                    // debug!("Received message: {}", text.on_red());
                     match serde_json::from_str::<Value>(&text) {
                         Ok(value) => {
                             if let Some(op) = value["op"].as_str() {
@@ -75,7 +77,7 @@ async fn handle_websocket_stream<S>(
                                 } else if op == "subscribe" {
                                     // Handle "subscribe" messages
                                     let parsed_msg: SubscribeMessage = serde_json::from_value(value).expect("Failed to parse message as SubscribeMessage");
-                                    debug!("Parsed message as SubscribeMessage: {:?}", parsed_msg);
+                                    // debug!("Parsed message as SubscribeMessage: {:?}", parsed_msg);
 
                                     let my_msg = MyMessage {
                                         timestamp: chrono::Utc::now().timestamp_millis() as u128,
@@ -123,7 +125,7 @@ async fn handle_websocket_stream<S>(
         endpoint_name: uri.to_string(),
         message: Message::Text(text), // Repackaging text as Message
     };
-    debug!("Forwarding general message: {:?}", my_msg);
+    // debug!("Forwarding general message: {:?}", my_msg);
 
     if let Err(e) = general_tx.send(my_msg).await {
         error!("Error forwarding to general handler: {:?}", e);
@@ -218,7 +220,7 @@ pub async fn manage_connection(
     }
 }
 
-pub async fn websocket_manager(base_url: &str, endpoints: Vec<&str>) {
+pub async fn websocket_manager(base_url: &str, endpoints: &Vec<String>) {
     debug!("Initializing WebSocket manager");
 
     // Create a channel for general messages

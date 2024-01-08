@@ -10,11 +10,16 @@ mod websocket_manager;
 mod subscription_manager;
 mod config;
 
+
+
 // ====================
 // External Library Imports
 // ====================
 use log::debug;
 use tokio::signal;
+use ::config::File;
+use ::config::Config;
+use crate::config::AppConfig;
 use crate::websocket_manager::websocket_manager;
 
 // ====================
@@ -22,31 +27,24 @@ use crate::websocket_manager::websocket_manager;
 // ====================
 #[tokio::main]
 async fn main() {
-    // Initialize the logger for application-wide logging
+    // Initialize logger
     env_logger::init();
     debug!("Application started");
 
-    // Configuration for the WebSocket connections
-    let base_url = "wss://stream-testnet.bybit.com/v5/";
-    let endpoints = vec![
-        "public/spot",
-        "public/linear",
-        "public/inverse",
-        "public/option",
-        "private",
-    ];
+    // Set up configuration
+    let settings = Config::builder()
+        .add_source(File::with_name("config/default"))
+        .build()
+        .unwrap();
 
+    let app_config: AppConfig = settings.try_deserialize().unwrap();
 
-    // ====================
-    // Service Initialization Section
-    // ====================
-
-    // Initialize and run the WebSocket manager for handling connections
+    // Rest of your application logic remains the same
     websocket_manager(
-        base_url,
-        endpoints,
-    )
-        .await;
+        &app_config.base_url,
+        &app_config.endpoints,
+    ).await;
+
 
     // Wait for CTRL+C signal for graceful shutdown
     signal::ctrl_c().await.expect("Failed to listen for CTRL+C");

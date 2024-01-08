@@ -3,7 +3,6 @@ name = "new_rust_app"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 tokio = { version = "1.35.1", features = ["sync", "rt", "rt-multi-thread", "macros", "signal", "time", "test-util"] }
@@ -19,7 +18,8 @@ serde_json = "1.0.111"
 chrono = { version = "0.4.31", features = [] }
 colored = "2.0"
 crossbeam-channel = "0.5.10"
-serde = { version = "1.0.194", features = ["derive"] }
+serde = { version = "1.0.195", features = ["derive"] }
 mockall = "0.12.1"
 async-trait = "0.1.77"
 test-log = "0.2.14"
+config = "0.13.4"

@@ -21,7 +21,7 @@ pub async fn start_subscribing(
         "op": "subscribe",
         "args": topics
     })
-        .to_string();
+    .to_string();
 
     debug!(
         "Constructed subscribe message: {}",
@@ -45,14 +45,11 @@ pub async fn start_subscribing(
     }
 
     // Verifying the subscription response
-    match verify_subscription(
-        &mut subscription_response_read,
-        &req_id,
-        &uri,
-    )
-        .await
-    {
-        Ok(_) => debug!("Successfully verified subscription response for uri: {}", uri),
+    match verify_subscription(&mut subscription_response_read, &req_id, &uri).await {
+        Ok(_) => debug!(
+            "Successfully verified subscription response for uri: {}",
+            uri
+        ),
         Err(e) => {
             error!("Failed to verify subscription for uri {}: {:?}", uri, e);
             // Depending on the application logic, you might want to return, retry, or ignore errors here

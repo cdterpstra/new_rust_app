@@ -8,11 +8,11 @@ mod listener;
 mod ping_manager;
 mod websocket_manager;
 mod subscription_manager;
+mod config;
 
 // ====================
 // External Library Imports
 // ====================
-// use crate::common::{BroadcastMessage};
 use log::debug;
 use tokio::signal;
 use crate::websocket_manager::websocket_manager;
@@ -30,19 +30,16 @@ async fn main() {
     let base_url = "wss://stream-testnet.bybit.com/v5/";
     let endpoints = vec![
         "public/spot",
-        // "public/linear",
-        // "public/inverse",
-        // "public/option",
-        // "private",
+        "public/linear",
+        "public/inverse",
+        "public/option",
+        "private",
     ];
 
 
     // ====================
     // Service Initialization Section
     // ====================
-
-    // Start the listener to handle incoming broadcast messages
-
 
     // Initialize and run the WebSocket manager for handling connections
     websocket_manager(

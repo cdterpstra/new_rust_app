@@ -11,7 +11,7 @@ pub async fn listen_for_messages(mut receiver: mpsc::Receiver<MyMessage>) {
             Some(my_msg) => {  // Changed from Ok() to Some() as recv() returns Option
             // Print the received message to the screen
             info!(
-                    "Received Message with id {} from {}: {:?}",
+                    "Received Message with timestamp {} from {}: {:?}",
                     my_msg.timestamp, my_msg.endpoint_name, my_msg.message
                 );
             }

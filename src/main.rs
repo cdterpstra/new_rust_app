@@ -9,13 +9,13 @@ mod ping_manager;
 mod websocket_manager;
 mod subscription_manager;
 mod config;
-
+mod auth_module;
 
 
 // ====================
 // External Library Imports
 // ====================
-use log::debug;
+use log::{debug, error};
 use tokio::signal;
 use ::config::File;
 use ::config::Config;
@@ -32,12 +32,28 @@ async fn main() {
     debug!("Application started");
 
     // Set up configuration
-    let settings = Config::builder()
+    // Set up configuration
+    let settings = match Config::builder()
         .add_source(File::with_name("config/default"))
-        .build()
-        .unwrap();
+        .build() {
+        Ok(settings) => settings,
+        Err(e) => {
+            error!("Failed to build configuration: {}", e);
+            return;
+        }
+    };
 
-    let app_config: AppConfig = settings.try_deserialize().unwrap();
+    // At this point, settings is of type Config, not Result
+    println!("Config read successfully: {:?}", settings);
+
+    let app_config: AppConfig = match settings.try_deserialize() {
+        Ok(config) => config,
+        Err(e) => {
+            error!("Failed to deserialize AppConfig: {}", e);
+            return;
+        }
+    };
+
 
     // Rest of your application logic remains the same
     websocket_manager(

@@ -9,5 +9,8 @@ pub struct AppConfig {
     pub endpoints: Vec<String>,
     pub trading_pairs: Vec<String>,
     pub topics: HashMap<String, Vec<String>>,
+    pub api_key: String,
+    // pub api_secret: String,
+    pub private_key: String,
 }
 

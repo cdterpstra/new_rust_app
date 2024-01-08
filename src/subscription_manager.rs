@@ -14,7 +14,7 @@ use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 use crate::config::AppConfig;
 use tokio::time::{sleep, timeout};
-// use tokio_tungstenite::tungstenite::Error::Url;
+use crate::auth_module::generate_auth_message;
 
 
 pub async fn start_subscribing(
@@ -35,19 +35,53 @@ pub async fn start_subscribing(
 
     let mut app_config: AppConfig = settings.try_deserialize()?;
 
-    // Removing duplicates from trading_pairs
-    app_config.trading_pairs = app_config.trading_pairs.iter().cloned().collect::<HashSet<_>>().into_iter().collect();
+
+    if *last_segment == "private" {
+        // Generate authentication signature
+        let auth_message = generate_auth_message().await?; // Adjust parameters if needed
+
+        // Construct the WebSocket message for authentication
+        let auth_ws_message = Message::Text(auth_message);
+
+        // Wrap it into MyMessage structure
+        let my_auth_message = MyMessage {
+            timestamp: chrono::Utc::now().timestamp_millis() as u128,
+            endpoint_name: uri.clone(),
+            message: auth_ws_message,
+        };
+
+        // Send the authentication message
+        debug!("Sending auth message for uri: {}", uri.blue());
+        if let Err(e) = subscription_request_write.send(my_auth_message).await {
+            error!("Failed to send auth message for uri {}: {:?}", uri, e);
+            return Err(Box::new(e)); // Exiting function on send failure
+        }
+
+        // Optionally, you might want to wait and verify the authentication response before proceeding
+        // This would involve receiving and checking a message from subscription_response_read
+    }
 
     // Dynamically select topics based on the last part of the URI
-    let topics_to_subscribe = app_config.topics.get(*last_segment).ok_or(format!("No topics found for {}", last_segment))?;
+    let topics_to_subscribe = app_config.topics.get(*last_segment)
+        .ok_or(format!("No topics found for {}", last_segment))?;
 
-    // Ensure no duplicate topics
+// Ensure no duplicate topics
     let unique_topics: Vec<String> = topics_to_subscribe.iter().cloned().collect::<HashSet<_>>().into_iter().collect();
 
-    // Variables for clarity and modification
-    let all_topics = unique_topics.iter()
-        .flat_map(|topic| app_config.trading_pairs.iter().map(move |pair| format!("{}.{}", topic, pair)))
-        .collect::<Vec<_>>();
+// Variables for clarity and modification
+    let all_topics = if *last_segment == "private" {
+        // If the endpoint is 'private', use the topics as they are
+        unique_topics.clone()
+    } else {
+        // Otherwise, combine them with trading pairs
+        unique_topics.iter()
+            .flat_map(|topic| app_config.trading_pairs.iter().map(move |pair| format!("{}.{}", topic, pair)))
+            .collect::<Vec<_>>()
+    };
+
+
+
+
 
     // Splitting into chunks of 10 and subscribing to each chunk
     for chunk in all_topics.chunks(10) {

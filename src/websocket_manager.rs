@@ -3,7 +3,7 @@ use crate::subscription_manager::start_subscribing;
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -20,6 +20,7 @@ pub struct MyMessage {
     pub message: Message,
 }
 
+
 // Updated handle_websocket_stream function
 #[derive(Serialize, Deserialize, Debug)]
 struct PongMessage {
@@ -31,10 +32,20 @@ struct PongMessage {
     args: Option<Vec<String>>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct SubscribeMessage {
+    success: Option<bool>,
+    ret_msg: Option<String>,
+    conn_id: Option<String>,
+    req_id: Option<String>,
+    op: String,
+}
+
 async fn handle_websocket_stream<S>(
     mut read: SplitStream<WebSocketStream<S>>,
     uri: &str,
     pong_tx: mpsc::Sender<MyMessage>,
+    subscribe_response_tx: mpsc::Sender<MyMessage>,
     general_tx: mpsc::Sender<MyMessage>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -61,8 +72,23 @@ async fn handle_websocket_stream<S>(
                                     if let Err(e) = pong_tx.send(my_msg).await {
                                         error!("Error forwarding to pong handler: {:?}", e);
                                     }
+                                } else if op == "subscribe" {
+                                    // Handle "subscribe" messages
+                                    let parsed_msg: SubscribeMessage = serde_json::from_value(value).expect("Failed to parse message as SubscribeMessage");
+                                    debug!("Parsed message as SubscribeMessage: {:?}", parsed_msg);
+
+                                    let my_msg = MyMessage {
+                                        timestamp: chrono::Utc::now().timestamp_millis() as u128,
+                                        endpoint_name: uri.to_string(),
+                                        message: Message::Text(text.clone()), // Repackaging text as Message
+                                    };
+
+                                    debug!("Forwarding subscribe message: {:?}", my_msg);
+                                    if let Err(e) = subscribe_response_tx.send(my_msg).await {
+                                        error!("Error forwarding to subscribe handler: {:?}", e);
+                                    }
                                 } else {
-                                    // Handle non-ping/pong messages
+                                    // Handle messages with other "op" fields
                                     forward_general_message(text, uri, &general_tx).await;
                                 }
                             } else {
@@ -86,7 +112,7 @@ async fn handle_websocket_stream<S>(
     }
 }
 
-async fn forward_general_message(
+    async fn forward_general_message(
     text: String,
     uri: &str,
     general_tx: &mpsc::Sender<MyMessage>,
@@ -130,14 +156,15 @@ pub async fn manage_connection(
 
                 let uri_clone = uri.clone();
                 let pong_tx_clone = pong_tx.clone();
+                let subscribe_response_tx_clone = subscribe_response_tx.clone();
                 let general_tx_clone = general_tx.clone();
 
                 debug!("Spawning task to handle WebSocket stream");
                 let handle_task = spawn(async move {
-                    handle_websocket_stream(read, &uri_clone, pong_tx_clone, general_tx_clone).await;
+                    handle_websocket_stream(read, &uri_clone, pong_tx_clone, subscribe_response_tx_clone, general_tx_clone).await;
                 });
 
-                debug!("Spawning task to write ping messages");
+                debug!("Spawning task to write messages");
                 let _write_task = spawn(async move {
                     loop {
                         select! {

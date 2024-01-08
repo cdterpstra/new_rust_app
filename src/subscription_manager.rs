@@ -73,6 +73,7 @@ async fn verify_subscription(
         if let Message::Text(text) = subscription_response.message {
             match serde_json::from_str::<Value>(&text) {
                 Ok(json) => {
+                    debug!("Received subcribe message to verify: {}", text);
                     // Handle successful parsing
                     if json["req_id"] == req_id && json["op"] == "subscribe" {
                         // Check if subscription was successful here based on your application logic

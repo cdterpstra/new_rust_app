@@ -10,6 +10,7 @@ mod websocket_manager;
 mod subscription_manager;
 mod config;
 mod auth_module;
+mod websocket_handler;
 
 
 // ====================

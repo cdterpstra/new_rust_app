@@ -1,16 +1,15 @@
 use crate::listener;
 use crate::ping_manager::start_pinging;
 use crate::subscription_manager::start_subscribing;
-use futures_util::stream::SplitStream;
+use crate::websocket_handler::handle_websocket_stream;
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error};
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::{select, spawn, time};
-use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
+
 
 // Define a structure for messages
 #[derive(Debug)]
@@ -22,7 +21,7 @@ pub struct MyMessage {
 
 // Updated handle_websocket_stream function
 #[derive(Serialize, Deserialize, Debug)]
-struct PongMessage {
+pub(crate) struct PongMessage {
     success: Option<bool>,
     ret_msg: Option<String>,
     conn_id: Option<String>,
@@ -32,7 +31,7 @@ struct PongMessage {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct SubscribeMessage {
+pub(crate) struct SubscribeMessage {
     success: Option<bool>,
     ret_msg: Option<String>,
     conn_id: Option<String>,
@@ -40,82 +39,9 @@ struct SubscribeMessage {
     op: String,
 }
 
-async fn handle_websocket_stream<S>(
-    mut read: SplitStream<WebSocketStream<S>>,
-    uri: &str,
-    pong_tx: mpsc::Sender<MyMessage>,
-    subscribe_response_tx: mpsc::Sender<MyMessage>,
-    general_tx: mpsc::Sender<MyMessage>,
-) where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    while let Some(message) = read.next().await {
-        match message {
-            Ok(msg) => {
-                if let Message::Text(text) = msg {
-                    // Parse message as a generic JSON Value
-                    // debug!("Received message: {}", text.on_red());
-                    match serde_json::from_str::<Value>(&text) {
-                        Ok(value) => {
-                            if let Some(op) = value["op"].as_str() {
-                                // Check if the "op" field is "ping" or "pong"
-                                if op == "ping" || op == "pong" {
-                                    let parsed_msg: PongMessage = serde_json::from_value(value)
-                                        .expect("Failed to parse message as PongMessage");
-                                    debug!("Parsed message as PongMessage: {:?}", parsed_msg);
 
-                                    let my_msg = MyMessage {
-                                        timestamp: chrono::Utc::now().timestamp_millis() as u128,
-                                        endpoint_name: uri.to_string(),
-                                        message: Message::Text(text.clone()), // Repackaging text as Message
-                                    };
 
-                                    if let Err(e) = pong_tx.send(my_msg).await {
-                                        error!("Error forwarding to pong handler: {:?}", e);
-                                    }
-                                } else if op == "subscribe" {
-                                    // Handle "subscribe" messages
-                                    let _parsed_msg: SubscribeMessage =
-                                        serde_json::from_value(value)
-                                            .expect("Failed to parse message as SubscribeMessage");
-                                    // debug!("Parsed message as SubscribeMessage: {:?}", parsed_msg);
-
-                                    let my_msg = MyMessage {
-                                        timestamp: chrono::Utc::now().timestamp_millis() as u128,
-                                        endpoint_name: uri.to_string(),
-                                        message: Message::Text(text.clone()), // Repackaging text as Message
-                                    };
-
-                                    debug!("Forwarding subscribe message: {:?}", my_msg);
-                                    if let Err(e) = subscribe_response_tx.send(my_msg).await {
-                                        error!("Error forwarding to subscribe handler: {:?}", e);
-                                    }
-                                } else {
-                                    // Handle messages with other "op" fields
-                                    forward_general_message(text, uri, &general_tx).await;
-                                }
-                            } else {
-                                // Handle messages without an "op" field
-                                forward_general_message(text, uri, &general_tx).await;
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to parse message: {:?}", e);
-                            // Since the message couldn't be parsed, treat it as a general message
-                            forward_general_message(text, uri, &general_tx).await;
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Error receiving ws message: {:?}", e);
-                break; // Exit the loop on error
-            }
-        }
-    }
-}
-
-async fn forward_general_message(text: String, uri: &str, general_tx: &mpsc::Sender<MyMessage>) {
+pub(crate) async fn forward_general_message(text: String, uri: &str, general_tx: &mpsc::Sender<MyMessage>) {
     let my_msg = MyMessage {
         timestamp: chrono::Utc::now().timestamp_millis() as u128,
         endpoint_name: uri.to_string(),

@@ -1,11 +1,9 @@
+// Import necessary crates and modules
 use url::Url;
 use std::collections::HashSet;
 use std::error::Error;
-use std::sync::Arc;
 use colored::Colorize;
 use config::{Config, File};
-use futures_util::StreamExt;
-// Import necessary crates and modules
 use crate::websocket_manager::MyMessage;
 use log::{debug, error, info};
 use serde_json::{json, Value};
@@ -33,7 +31,7 @@ pub async fn start_subscribing(
         .add_source(File::with_name("config/default"))
         .build()?;
 
-    let mut app_config: AppConfig = settings.try_deserialize()?;
+    let app_config: AppConfig = settings.try_deserialize()?;
 
 
     if *last_segment == "private" {

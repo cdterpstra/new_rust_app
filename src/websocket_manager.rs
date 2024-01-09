@@ -1,7 +1,6 @@
 use crate::listener;
 use crate::ping_manager::start_pinging;
 use crate::subscription_manager::start_subscribing;
-use colored::Colorize;
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error};
@@ -76,7 +75,7 @@ async fn handle_websocket_stream<S>(
                                     }
                                 } else if op == "subscribe" {
                                     // Handle "subscribe" messages
-                                    let parsed_msg: SubscribeMessage =
+                                    let _parsed_msg: SubscribeMessage =
                                         serde_json::from_value(value)
                                             .expect("Failed to parse message as SubscribeMessage");
                                     // debug!("Parsed message as SubscribeMessage: {:?}", parsed_msg);
@@ -204,7 +203,7 @@ pub async fn manage_connection(uri: String, general_tx: mpsc::Sender<MyMessage>)
                 let uri_for_subscribe_task = uri.clone();
                 debug!("Spawning subscription task for {}", uri_for_subscribe_task);
                 let _subscription_task = spawn(async move {
-                    start_subscribing(
+                    let _ = start_subscribing(
                         subscribe_request_tx,
                         subscribe_response_rx,
                         uri_for_subscribe_task,
@@ -235,7 +234,7 @@ pub async fn manage_connection(uri: String, general_tx: mpsc::Sender<MyMessage>)
     }
 }
 
-pub async fn websocket_manager(base_url: &str, endpoints: &Vec<String>) {
+pub async fn websocket_manager(base_url: &str, endpoints: &[String]) {
     debug!("Initializing WebSocket manager");
 
     // Create a channel for general messages

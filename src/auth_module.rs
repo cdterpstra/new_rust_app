@@ -1,10 +1,9 @@
 use std::time::SystemTime;
+use base64::Engine;
 use openssl::{hash::MessageDigest, rsa::Rsa, sign::Signer, pkey::PKey};
-use base64::{encode, Engine};
 use base64::engine::general_purpose::STANDARD;
 use config::{Config, File};
 use log::debug;
-use colored::Colorize;
 use serde_json::json;
 use crate::config::AppConfig;
 

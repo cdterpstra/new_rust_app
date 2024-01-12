@@ -1,3 +1,4 @@
+use crate::websocket_manager::{forward_general_message, MyMessage, PongMessage, SubscribeMessage};
 use futures_util::stream::SplitStream;
 use futures_util::StreamExt;
 use log::{debug, error};
@@ -6,7 +7,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio_tungstenite::WebSocketStream;
 use tungstenite::Message;
-use crate::websocket_manager::{MyMessage, PongMessage, SubscribeMessage, forward_general_message};
 
 pub async fn handle_websocket_stream<S>(
     mut read: SplitStream<WebSocketStream<S>>,
@@ -18,7 +18,9 @@ pub async fn handle_websocket_stream<S>(
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     while let Some(message) = read.next().await {
-        if let Err(e) = process_message(message, uri, &pong_tx, &subscribe_response_tx, &general_tx).await {
+        if let Err(e) =
+            process_message(message, uri, &pong_tx, &subscribe_response_tx, &general_tx).await
+        {
             error!("Error processing ws message: {:?}", e);
             break; // Exit the loop on error
         }
@@ -40,8 +42,11 @@ async fn process_message(
 
         match value["op"].as_str() {
             Some("ping") | Some("pong") => handle_pong_message(text, uri, pong_tx).await,
-            Some("subscribe") => handle_subscribe_message(text, uri, subscribe_response_tx).await,
-            _ => Ok(forward_general_message(text, uri, general_tx).await),
+            Some("subscribe") | Some("auth") => handle_subscribe_message(text, uri, subscribe_response_tx).await,
+            _ => {
+                forward_general_message(text, uri, general_tx).await;
+                Ok(())
+            }
         }
     } else {
         Ok(())
@@ -53,12 +58,15 @@ async fn handle_pong_message(
     uri: &str,
     pong_tx: &mpsc::Sender<MyMessage>,
 ) -> Result<(), String> {
-    let parsed_msg: PongMessage = serde_json::from_str(&text)
-        .expect("Failed to parse message as PongMessage");
+    let parsed_msg: PongMessage =
+        serde_json::from_str(&text).expect("Failed to parse message as PongMessage");
     debug!("Parsed message as PongMessage: {:?}", parsed_msg);
 
     let my_msg = create_my_message(text, uri);
-    pong_tx.send(my_msg).await.map_err(|e| format!("Error forwarding to pong handler: {:?}", e))
+    pong_tx
+        .send(my_msg)
+        .await
+        .map_err(|e| format!("Error forwarding to pong handler: {:?}", e))
 }
 
 async fn handle_subscribe_message(
@@ -66,12 +74,15 @@ async fn handle_subscribe_message(
     uri: &str,
     subscribe_response_tx: &mpsc::Sender<MyMessage>,
 ) -> Result<(), String> {
-    let _parsed_msg: SubscribeMessage = serde_json::from_str(&text)
-        .expect("Failed to parse message as SubscribeMessage");
+    let _parsed_msg: SubscribeMessage =
+        serde_json::from_str(&text).expect("Failed to parse message as SubscribeMessage");
     debug!("Forwarding subscribe message");
 
     let my_msg = create_my_message(text, uri);
-    subscribe_response_tx.send(my_msg).await.map_err(|e| format!("Error forwarding to subscribe handler: {:?}", e))
+    subscribe_response_tx
+        .send(my_msg)
+        .await
+        .map_err(|e| format!("Error forwarding to subscribe handler: {:?}", e))
 }
 
 fn create_my_message(text: String, uri: &str) -> MyMessage {

@@ -1,12 +1,13 @@
+use std::sync::Arc;
 use crate::listener;
 use crate::ping_manager::start_pinging;
 use crate::subscription_manager::start_subscribing;
 use crate::websocket_handler::handle_websocket_stream;
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error};
-use rand::{Rng, SeedableRng};
+use rand::{Rng, SeedableRng, thread_rng};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tokio::{select, spawn, time};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -98,11 +99,12 @@ pub async fn manage_connection(uri: String, general_tx: mpsc::Sender<MyMessage>)
                     loop {
                         select! {
                             Some(my_msg) = ping_rx.recv() => {
-                                 if let Err(e) = write.send(my_msg.message).await {
+                                let message_clone = my_msg.message.clone();
+                                 if let Err(e) = write.send(message_clone).await {
                                  error!("Failed to send ping to WebSocket: {:?}", e);
                                  break;
                                  } else {
-                                debug!("Successfully sent ping message to WebSocket");
+                                debug!("Successfully sent ping message to WebSocket: {:?}", my_msg.message);
                                     }
                                 },
                             Some(subscribe_msg) = subscribe_request_rx.recv() => {
@@ -166,16 +168,36 @@ pub async fn websocket_manager(base_url: &str, endpoints: &[String]) {
     // Create a channel for general messages
     let (general_tx, general_rx) = mpsc::channel::<MyMessage>(32);
 
+    // Shared state to manage connections
+    let connections = Arc::new(Mutex::new(Vec::new()));
+
     // Spawn the listener task with its own receiver clone
     spawn(async move {
         listener::listen_for_messages(general_rx).await;
     });
 
-    for endpoint in endpoints.iter() {
-        let uri = format!("{}{}", base_url, endpoint);
-        debug!("Creating WebSocket connection for {}", uri);
+    // Main loop to manage connections
+    loop {
+        let mut conn_guard = connections.lock().await;
+        conn_guard.clear(); // Disconnect existing connections
 
-        // Spawn a connection management task
-        spawn(manage_connection(uri, general_tx.clone()));
+        for endpoint in endpoints.iter() {
+            let uri = format!("{}{}", base_url, endpoint);
+            debug!("Creating WebSocket connection for {}", uri);
+
+            // Spawn a connection management task and keep the handle
+            let handle = spawn(manage_connection(uri, general_tx.clone()));
+            conn_guard.push(handle);
+        }
+
+        // Release the lock before sleeping
+        drop(conn_guard);
+
+        // Generate a random duration between 4 and 18 hours
+        let mut rng = thread_rng();
+        let random_duration = rng.gen_range(4 * 60 * 60..18 * 60 * 60);
+
+        // Wait for the random duration before restarting the loop
+        time::sleep(core::time::Duration::from_secs(random_duration)).await;
     }
 }

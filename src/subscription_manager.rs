@@ -158,6 +158,7 @@ async fn verify_subscription(
                             uri, req_id
                         );
                         return Ok(());
+
                     } else {
                         // Log why it's continuing, if the message isn't a match
                         debug!("Continuing verification: Message didn't match the expected subscription confirmation.");

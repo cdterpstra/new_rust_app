@@ -1,0 +1,45 @@
+extern crate diesel;
+extern crate dotenv;
+
+use diesel::prelude::*;
+use diesel::pg::PgConnection;
+use diesel::sql_types::Bool;
+use diesel::QueryableByName;
+use dotenv::dotenv;
+use std::env;
+
+#[derive(QueryableByName)]
+struct ExistsResult {
+    #[sql_type = "Bool"]
+    exists: bool,
+}
+
+fn establish_connection() -> PgConnection {
+    dotenv().ok();
+    println!("Database URL: {:?}", env::var("DATABASE_URL"));
+
+    let database_url = env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set");
+    PgConnection::establish(&database_url)
+        .expect(&format!("Error connecting to {}", database_url))
+}
+
+pub(crate) async fn check_schema() {
+
+
+
+    let mut connection = establish_connection();
+
+    let schema_exists: ExistsResult = diesel::sql_query("SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'crypto') AS exists;")
+        .get_result(&mut connection)
+        .expect("Error checking for schema");
+
+    if !schema_exists.exists {
+        diesel::sql_query("CREATE SCHEMA crypto;")
+            .execute(&mut connection)
+            .expect("Error creating schema");
+        println!("Schema 'crypto' created.");
+    } else {
+        println!("Schema 'crypto' already exists.");
+    }
+}

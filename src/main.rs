@@ -11,6 +11,7 @@ mod subscription_manager;
 mod config;
 mod auth_module;
 mod websocket_handler;
+mod check_schema;
 
 
 // ====================
@@ -45,7 +46,7 @@ async fn main() {
     };
 
     // At this point, settings is of type Config, not Result
-    println!("Config read successfully: {:?}", settings);
+    // println!("Config read successfully: {:?}", settings);
 
     let app_config: AppConfig = match settings.try_deserialize() {
         Ok(config) => config,
@@ -55,6 +56,7 @@ async fn main() {
         }
     };
 
+    check_schema::check_schema().await;
 
     // Rest of your application logic remains the same
     websocket_manager(

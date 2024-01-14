@@ -27,3 +27,5 @@ url = "2.5.0"
 openssl = "0.10.61"
 base64 = "0.21.5"
 tungstenite = "0.21.0"
+diesel = { version = "2.1.4", features = ["postgres"] }
+dotenv = "0.15.0"

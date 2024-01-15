@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use crate::listener;
+use crate::{listener, write_to_database};
 use crate::ping_manager::start_pinging;
 use crate::subscription_manager::start_subscribing;
 use crate::websocket_handler::handle_websocket_stream;
@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex};
 use tokio::{select, spawn, time};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+use crate::db_connection_manager::establish_connection;
 
 
 // Define a structure for messages
@@ -178,9 +179,16 @@ pub async fn websocket_manager(base_url: &str, endpoints: &[String]) {
     // Shared state to manage connections
     let connections = Arc::new(Mutex::new(Vec::new()));
 
-    // Spawn the listener task with its own receiver clone
+    // // Spawn the listener task with its own receiver clone
+    // spawn(async move {
+    //     listener::listen_for_messages(general_rx).await;
+    // });
+
+
+    // Spawn the database writer task with its own receiver clone
+    let conn = establish_connection();
     spawn(async move {
-        listener::listen_for_messages(general_rx).await;
+        write_to_database::insert_into_db(general_rx, conn).await;
     });
 
     // Main loop to manage connections

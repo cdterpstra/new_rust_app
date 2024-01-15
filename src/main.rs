@@ -12,7 +12,9 @@ mod config;
 mod auth_module;
 mod websocket_handler;
 mod check_schema;
-
+mod write_to_database;
+mod db_connection_manager;
+mod schema;
 
 // ====================
 // External Library Imports

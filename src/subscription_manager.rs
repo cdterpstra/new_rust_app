@@ -43,7 +43,7 @@ pub async fn start_subscribing(
 
         // Wrap it into MyMessage structure
         let my_auth_message = MyMessage {
-            timestamp: chrono::Utc::now().timestamp_millis() as u128,
+            timestamp: chrono::Utc::now().timestamp_millis() as u64,
             endpoint_name: uri.clone(),
             message: auth_ws_message,
         };
@@ -103,7 +103,7 @@ pub async fn start_subscribing(
         let subscribe_ws_message = Message::Text(public_topics_subscribe_message);
 
         let my_subscribe_message = MyMessage {
-            timestamp: chrono::Utc::now().timestamp_millis() as u128,
+            timestamp: chrono::Utc::now().timestamp_millis() as u64,
             endpoint_name: uri.clone(),
             message: subscribe_ws_message,
         };

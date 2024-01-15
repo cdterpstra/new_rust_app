@@ -180,6 +180,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-targets 0.48.5",
 ]
@@ -290,6 +291,7 @@ dependencies = [
  "bigdecimal",
  "bitflags 2.4.1",
  "byteorder",
+ "chrono",
  "diesel_derives",
  "itoa",
  "num-bigint",

@@ -16,7 +16,7 @@ use crate::db_connection_manager::establish_connection;
 // Define a structure for messages
 #[derive(Debug)]
 pub struct MyMessage {
-    pub timestamp: u64,
+    pub receivedat: i64,
     pub endpoint_name: String,
     pub message: Message,
 }
@@ -44,19 +44,19 @@ pub(crate) struct SubscribeMessage {
 
 
 pub(crate) async fn forward_general_message(text: String, uri: &str, general_tx: &mpsc::Sender<MyMessage>) {
-    let timestamp: u64 = match chrono::Utc::now().timestamp_nanos_opt() {
-        Some(nanos) => nanos as u64,
+    let timestamp: i64 = match chrono::Utc::now().timestamp_nanos_opt() {
+        Some(nanos) => nanos as i64,
         None => {
             // Handle the error appropriately, such as logging or panicking
             panic!("Unable to obtain timestamp in nanoseconds.");
         }
     };
     let my_msg = MyMessage {
-        timestamp,
+        receivedat: timestamp as i64,
         endpoint_name: uri.to_string(),
         message: Message::Text(text), // Repackaging text as Message
     };
-    // debug!("Forwarding general message: {:?}", my_msg);
+    debug!("Forwarding general message: {:?}", my_msg);
 
     if let Err(e) = general_tx.send(my_msg).await {
         error!("Error forwarding to general handler: {:?}", e);

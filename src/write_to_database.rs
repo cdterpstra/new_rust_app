@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use serde_json::{from_str, Value};
+use serde_json::from_str;
 use crate::websocket_manager::MyMessage;
 use diesel::prelude::*;
 use log::info;
@@ -10,8 +10,6 @@ use crate::db_connection_manager::PgPool;
 use crate::schema::crypto::tickers;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
-use diesel::data_types::PgTimestamp;
-use diesel::dsl::date;
 
 fn deserialize_optional_string_timestamp<'de, D>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error>
     where
@@ -94,15 +92,23 @@ struct NewMessage {
     cs: Option<i64>,
     ts: Option<NaiveDateTime>,
     endpoint: Option<String>,
+    receivedat: NaiveDateTime,
 }
 
 
 pub async fn insert_message_into_db(
+    other_receivedat: i64,
     endpoint_name: String,
     message: MessageData,
     conn: &mut PgConnection // Change the reference to mutable
 ) -> Result<(), diesel::result::Error> {
     let message_clone = message.clone();
+
+    let seconds = other_receivedat / 1_000_000_000;
+    let nanoseconds = (other_receivedat % 1_000_000_000) as u32;
+    let received_at_time = NaiveDateTime::from_timestamp_opt(seconds, nanoseconds)
+        .expect("Invalid timestamp");
+
     // Create a NewMessage struct with the data you want to insert
     let new_message = NewMessage {
         // topic: message_clone.topic,
@@ -130,6 +136,7 @@ pub async fn insert_message_into_db(
         cs: Some(message_clone.cs),
         ts: Some(message_clone.ts.naive_utc()),
         endpoint: Some(endpoint_name),
+        receivedat: received_at_time,
     };
 
     println!("New message to insert: {:?}", new_message);
@@ -153,7 +160,7 @@ pub async fn insert_into_db(mut receiver: mpsc::Receiver<MyMessage>, pool: PgPoo
         // Handle only text messages
         info!(
             "Received Message with timestamp {} from {}: {:?}",
-            my_msg.timestamp, my_msg.endpoint_name, my_msg.message
+            my_msg.receivedat, my_msg.endpoint_name, my_msg.message
         );
 
         if let WebSocketMessage::Text(ref text) = my_msg.message {
@@ -170,7 +177,7 @@ pub async fn insert_into_db(mut receiver: mpsc::Receiver<MyMessage>, pool: PgPoo
                         let mut conn = pool.get().expect("Failed to get database connection from pool");
 
                         // Call async function to insert the message with the connection
-                        let _ = insert_message_into_db(my_msg.endpoint_name, parsed_message.clone(), &mut conn).await; // Pass &mut conn here
+                        let _ = insert_message_into_db(my_msg.receivedat, my_msg.endpoint_name, parsed_message.clone(), &mut conn).await; // Pass &mut conn here
                         println!("Passed to insert: {:?}", parsed_message.clone());
                     }
                 },

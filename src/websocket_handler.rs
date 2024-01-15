@@ -87,7 +87,7 @@ async fn handle_subscribe_message(
 
 fn create_my_message(text: String, uri: &str) -> MyMessage {
     MyMessage {
-        timestamp: chrono::Utc::now().timestamp_millis() as u64,
+        receivedat: chrono::Utc::now().timestamp_millis(),
         endpoint_name: uri.to_string(),
         message: Message::Text(text), // Repackaging text as Message
     }

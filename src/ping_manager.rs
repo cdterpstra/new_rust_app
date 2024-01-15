@@ -35,7 +35,7 @@ pub async fn start_pinging(write_ping: mpsc::Sender<MyMessage>, mut read_pong: m
 
         // Wrapping it into your MyMessage structure
         let my_ping_message = MyMessage {
-            receivedat: chrono::Utc::now().timestamp_millis() as i64,
+            receivedat: chrono::Utc::now().timestamp_millis(),
             endpoint_name: uri.clone(),
             message: ping_ws_message,
         };

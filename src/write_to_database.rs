@@ -19,12 +19,15 @@ fn deserialize_optional_string_timestamp<'de, D>(deserializer: D) -> Result<Opti
     match option {
         Some(s) => {
             let millis = i64::from_str(&s).map_err(serde::de::Error::custom)?;
-            let timestamp = Utc.timestamp_millis(millis);
-            Ok(Some(timestamp))
+            match Utc.timestamp_millis_opt(millis) {
+                chrono::LocalResult::Single(timestamp) => Ok(Some(timestamp)),
+                _ => Err(serde::de::Error::custom("Invalid timestamp")),
+            }
         },
         None => Ok(None),
     }
 }
+
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MessageData {

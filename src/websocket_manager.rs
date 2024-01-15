@@ -45,7 +45,7 @@ pub(crate) struct SubscribeMessage {
 
 pub(crate) async fn forward_general_message(text: String, uri: &str, general_tx: &mpsc::Sender<MyMessage>) {
     let timestamp: i64 = match chrono::Utc::now().timestamp_nanos_opt() {
-        Some(nanos) => nanos as i64,
+        Some(nanos) => nanos,
         None => {
             // Handle the error appropriately, such as logging or panicking
             panic!("Unable to obtain timestamp in nanoseconds.");

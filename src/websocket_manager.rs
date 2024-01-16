@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use colored::Colorize;
 use crate::{listener, write_to_database};
 use crate::ping_manager::start_pinging;
 use crate::subscription_manager::start_subscribing;
@@ -214,5 +215,6 @@ pub async fn websocket_manager(base_url: &str, endpoints: &[String]) {
 
         // Wait for the random duration before restarting the loop
         time::sleep(core::time::Duration::from_secs(random_duration)).await;
+        println!("{}", "Restarting WebSocket connections".on_red());
     }
 }

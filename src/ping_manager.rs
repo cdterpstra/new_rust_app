@@ -54,6 +54,7 @@ pub async fn start_pinging(write_ping: mpsc::Sender<MyMessage>, mut read_pong: m
             Ok(_) => debug!("Successfully verified pong response for uri: {}", uri),
             Err(e) => {
                 error!("Failed to verify pong for uri {}: {:?}", uri, e);
+                break;
                 // Depending on the application logic, you might want to break, retry, or ignore errors here
             }
         }
@@ -113,7 +114,19 @@ async fn verify_pong(
 
 // Handle Spot, Inverse, and Linear endpoint pings
 fn handle_spot_inverse_linear(data: &Value, expected_req_id: &str) -> Result<(), String> {
-    if data["ret_msg"] == "pong" && data["req_id"] == expected_req_id && data["success"].as_bool().unwrap_or(false) {
+    let ret_msg = data.get("ret_msg")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing or invalid 'ret_msg'".to_string())?;
+
+    let req_id = data.get("req_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing or invalid 'req_id'".to_string())?;
+
+    let success = data.get("success")
+        .and_then(|v| v.as_bool())
+        .ok_or_else(|| "Missing or invalid 'success'".to_string())?;
+
+    if ret_msg == "pong" && req_id == expected_req_id && success {
         debug!("{} {}", "Pong success from Spot, Inverse, or Linear endpoint:".green(), data.to_string().green());
         Ok(())
     } else {

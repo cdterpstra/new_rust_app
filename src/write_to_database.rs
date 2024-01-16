@@ -1,19 +1,21 @@
-use std::str::FromStr;
-use serde_json::from_str;
+use crate::db_connection_manager::PgPool;
+use crate::schema::crypto::tickers;
 use crate::websocket_manager::MyMessage;
+use bigdecimal::BigDecimal;
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use diesel::prelude::*;
 use log::info;
 use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::from_str;
+use std::str::FromStr;
 use tokio::sync::mpsc;
 use tungstenite::Message as WebSocketMessage;
-use crate::db_connection_manager::PgPool;
-use crate::schema::crypto::tickers;
-use bigdecimal::BigDecimal;
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 
-fn deserialize_optional_string_timestamp<'de, D>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error>
-    where
-        D: Deserializer<'de>,
+fn deserialize_optional_string_timestamp<'de, D>(
+    deserializer: D,
+) -> Result<Option<DateTime<Utc>>, D::Error>
+where
+    D: Deserializer<'de>,
 {
     let option = Option::<String>::deserialize(deserializer)?;
     match option {
@@ -23,11 +25,10 @@ fn deserialize_optional_string_timestamp<'de, D>(deserializer: D) -> Result<Opti
                 chrono::LocalResult::Single(timestamp) => Ok(Some(timestamp)),
                 _ => Err(serde::de::Error::custom("Invalid timestamp")),
             }
-        },
+        }
         None => Ok(None),
     }
 }
-
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MessageData {
@@ -66,7 +67,6 @@ pub struct Data {
     pub ask1Size: Option<BigDecimal>,
 }
 
-
 #[derive(Insertable, Queryable, Debug)]
 #[diesel(table_name = tickers)]
 #[allow(non_snake_case)]
@@ -98,19 +98,18 @@ struct NewMessage {
     receivedat: NaiveDateTime,
 }
 
-
 pub async fn insert_message_into_db(
     other_receivedat: i64,
     endpoint_name: String,
     message: MessageData,
-    conn: &mut PgConnection // Change the reference to mutable
+    conn: &mut PgConnection, // Change the reference to mutable
 ) -> Result<(), diesel::result::Error> {
     let message_clone = message.clone();
 
     let seconds = other_receivedat / 1_000_000_000;
     let nanoseconds = (other_receivedat % 1_000_000_000) as u32;
-    let received_at_time = NaiveDateTime::from_timestamp_opt(seconds, nanoseconds)
-        .expect("Invalid timestamp");
+    let received_at_time =
+        NaiveDateTime::from_timestamp_opt(seconds, nanoseconds).expect("Invalid timestamp");
 
     // Create a NewMessage struct with the data you want to insert
     let new_message = NewMessage {
@@ -147,11 +146,11 @@ pub async fn insert_message_into_db(
     // Use Diesel's insert_into and execute to insert the new record
     match diesel::insert_into(tickers::table)
         .values(&new_message)
-        .execute(conn) {
+        .execute(conn)
+    {
         Ok(_) => println!("Insertion successful"),
         Err(e) => eprintln!("Error inserting data: {:?}", e),
     }
-
 
     println!("Inserted message: {:?}", message);
 
@@ -177,13 +176,21 @@ pub async fn insert_into_db(mut receiver: mpsc::Receiver<MyMessage>, pool: PgPoo
                         println!("Received: {:?}", parsed_message.clone());
 
                         // Obtain a connection from the pool and get a mutable reference
-                        let mut conn = pool.get().expect("Failed to get database connection from pool");
+                        let mut conn = pool
+                            .get()
+                            .expect("Failed to get database connection from pool");
 
                         // Call async function to insert the message with the connection
-                        let _ = insert_message_into_db(my_msg.receivedat, my_msg.endpoint_name, parsed_message.clone(), &mut conn).await; // Pass &mut conn here
+                        let _ = insert_message_into_db(
+                            my_msg.receivedat,
+                            my_msg.endpoint_name,
+                            parsed_message.clone(),
+                            &mut conn,
+                        )
+                        .await; // Pass &mut conn here
                         println!("Passed to insert: {:?}", parsed_message.clone());
                     }
-                },
+                }
                 Err(e) => {
                     // Handle JSON parsing error
                     eprintln!("Error parsing message JSON: {:?}", e);

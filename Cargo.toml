@@ -31,3 +31,9 @@ diesel = { version = "2.1.4", features = ["postgres", "r2d2", "numeric", "chrono
 dotenv = "0.15.0"
 bigdecimal = {version = "0.4.2", features = ["serde"]}
 
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+

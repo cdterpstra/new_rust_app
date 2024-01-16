@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use log::{debug, error};
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::WebSocketStream;
 use tungstenite::Message;
 
@@ -13,7 +13,7 @@ pub async fn handle_websocket_stream<S>(
     uri: &str,
     pong_tx: mpsc::Sender<MyMessage>,
     subscribe_response_tx: mpsc::Sender<MyMessage>,
-    general_tx: mpsc::Sender<MyMessage>,
+    general_tx: broadcast::Sender<MyMessage>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -32,7 +32,7 @@ async fn process_message(
     uri: &str,
     pong_tx: &mpsc::Sender<MyMessage>,
     subscribe_response_tx: &mpsc::Sender<MyMessage>,
-    general_tx: &mpsc::Sender<MyMessage>,
+    general_tx: &broadcast::Sender<MyMessage>,
 ) -> Result<(), String> {
     let msg = message.map_err(|e| format!("Error receiving ws message: {:?}", e))?;
 

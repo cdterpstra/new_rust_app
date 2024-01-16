@@ -8,14 +8,14 @@ use futures_util::{SinkExt, StreamExt};
 use log::{debug, error};
 use rand::{Rng, SeedableRng, thread_rng};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::{select, spawn, time};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use crate::db_connection_manager::establish_connection;
 
 
 // Define a structure for messages
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MyMessage {
     pub receivedat: i64,
     pub endpoint_name: String,
@@ -44,7 +44,7 @@ pub(crate) struct SubscribeMessage {
 
 
 
-pub(crate) async fn forward_general_message(text: String, uri: &str, general_tx: &mpsc::Sender<MyMessage>) {
+pub(crate) async fn forward_general_message(text: String, uri: &str, general_tx: &broadcast::Sender<MyMessage>) {
     let timestamp: i64 = match chrono::Utc::now().timestamp_nanos_opt() {
         Some(nanos) => nanos,
         None => {
@@ -59,12 +59,12 @@ pub(crate) async fn forward_general_message(text: String, uri: &str, general_tx:
     };
     debug!("Forwarding general message: {:?}", my_msg);
 
-    if let Err(e) = general_tx.send(my_msg).await {
+    if let Err(e) = general_tx.send(my_msg) {
         error!("Error forwarding to general handler: {:?}", e);
     }
 }
 
-pub async fn manage_connection(uri: String, general_tx: mpsc::Sender<MyMessage>) {
+pub async fn manage_connection(uri: String, general_tx: broadcast::Sender<MyMessage>) {
     let mut retry_delay = 1;
     let mut rng = rand::rngs::StdRng::from_entropy();
     debug!("Starting connection management for {}", uri);
@@ -175,21 +175,23 @@ pub async fn websocket_manager(base_url: &str, endpoints: &[String]) {
     debug!("Initializing WebSocket manager");
 
     // Create a channel for general messages
-    let (general_tx, general_rx) = mpsc::channel::<MyMessage>(32);
+    let (general_tx, general_rx) = broadcast::channel::<MyMessage>(32);
 
     // Shared state to manage connections
     let connections = Arc::new(Mutex::new(Vec::new()));
 
-    // // Spawn the listener task with its own receiver clone
-    // spawn(async move {
-    //     listener::listen_for_messages(general_rx).await;
-    // });
+    // Spawn the listener task with its own receiver clone
+    let general_rx1 = general_rx.resubscribe();
+    spawn(async move {
+        listener::listen_for_messages(general_rx1).await;
+    });
 
 
     // Spawn the database writer task with its own receiver clone
+    let general_rx2 = general_rx.resubscribe();
     let conn = establish_connection();
     spawn(async move {
-        write_to_database::insert_into_db(general_rx, conn).await;
+        write_to_database::insert_into_db(general_rx2, conn).await;
     });
 
     // Main loop to manage connections

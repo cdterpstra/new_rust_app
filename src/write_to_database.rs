@@ -8,7 +8,7 @@ use log::info;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::from_str;
 use std::str::FromStr;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tungstenite::Message as WebSocketMessage;
 
 fn deserialize_optional_string_timestamp<'de, D>(
@@ -157,8 +157,8 @@ pub async fn insert_message_into_db(
     Ok(())
 }
 
-pub async fn insert_into_db(mut receiver: mpsc::Receiver<MyMessage>, pool: PgPool) {
-    while let Some(my_msg) = receiver.recv().await {
+pub async fn insert_into_db(mut receiver: broadcast::Receiver<MyMessage>, pool: PgPool) {
+    while let Ok(my_msg) = receiver.recv().await {
         // Handle only text messages
         info!(
             "Received Message with timestamp {} from {}: {:?}",

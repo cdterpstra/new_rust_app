@@ -15,6 +15,7 @@ mod check_schema;
 mod write_to_database;
 mod db_connection_manager;
 mod schema;
+mod analysis_manager;
 
 // ====================
 // External Library Imports

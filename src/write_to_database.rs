@@ -186,7 +186,7 @@ pub async fn insert_into_db(mut receiver: broadcast::Receiver<MyMessage>, pool: 
                                 error!("Failed to parse into MessageData structure");
                             }
                         } else {
-                            info!("Received message with a different topic: {}", topic);
+                            trace!("Received message with a different topic: {}", topic);
                         }
                     } else {
                         error!("JSON does not contain 'topic' field");

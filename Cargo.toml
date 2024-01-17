@@ -30,6 +30,7 @@ tungstenite = "0.21.0"
 diesel = { version = "2.1.4", features = ["postgres", "r2d2", "numeric", "chrono"] }
 dotenv = "0.15.0"
 bigdecimal = {version = "0.4.2", features = ["serde"]}
+threadpool = "1.8.1"
 
 [profile.dev]
 opt-level = 0

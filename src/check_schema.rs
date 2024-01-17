@@ -7,6 +7,7 @@ use diesel::sql_types::Bool;
 use diesel::QueryableByName;
 use dotenv::dotenv;
 use std::env;
+use log::debug;
 
 #[derive(QueryableByName)]
 struct ExistsResult {
@@ -16,7 +17,7 @@ struct ExistsResult {
 
 fn establish_connection() -> PgConnection {
     dotenv().ok();
-    println!("Database URL: {:?}", env::var("DATABASE_URL"));
+    debug!("Database URL: {:?}", env::var("DATABASE_URL"));
 
     let database_url = env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set");
@@ -38,8 +39,8 @@ pub(crate) async fn check_schema() {
         diesel::sql_query("CREATE SCHEMA crypto;")
             .execute(&mut connection)
             .expect("Error creating schema");
-        println!("Schema 'crypto' created.");
+        debug!("Schema 'crypto' created.");
     } else {
-        println!("Schema 'crypto' already exists.");
+        debug!("Schema 'crypto' already exists.");
     }
 }

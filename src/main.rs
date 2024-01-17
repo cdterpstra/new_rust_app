@@ -16,11 +16,12 @@ mod write_to_database;
 mod db_connection_manager;
 mod schema;
 mod analysis_manager;
+mod message_processor;
 
 // ====================
 // External Library Imports
 // ====================
-use log::{debug, error};
+use log::{error, info};
 use tokio::signal;
 use ::config::File;
 use ::config::Config;
@@ -34,7 +35,7 @@ use crate::websocket_manager::websocket_manager;
 async fn main() {
     // Initialize logger
     env_logger::init();
-    debug!("Application started");
+    info!("Application started");
 
     // Set up configuration
     // Set up configuration
@@ -49,7 +50,7 @@ async fn main() {
     };
 
     // At this point, settings is of type Config, not Result
-    // println!("Config read successfully: {:?}", settings);
+    // debug!("Config read successfully: {:?}", settings);
 
     let app_config: AppConfig = match settings.try_deserialize() {
         Ok(config) => config,

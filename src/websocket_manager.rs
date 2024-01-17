@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use colored::Colorize;
-use crate::{listener, write_to_database};
+use crate::{listener, message_processor, write_to_database};
 use crate::ping_manager::start_pinging;
 use crate::subscription_manager::start_subscribing;
 use crate::websocket_handler::handle_websocket_stream;
 use futures_util::{SinkExt, StreamExt};
-use log::{debug, error};
+use log::{debug, error, info, trace};
 use rand::{Rng, SeedableRng, thread_rng};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, Mutex};
@@ -57,7 +57,7 @@ pub(crate) async fn forward_general_message(text: String, uri: &str, general_tx:
         endpoint_name: uri.to_string(),
         message: Message::Text(text), // Repackaging text as Message
     };
-    debug!("Forwarding general message: {:?}", my_msg);
+    trace!("Forwarding general message: {:?}", my_msg);
 
     if let Err(e) = general_tx.send(my_msg) {
         error!("Error forwarding to general handler: {:?}", e);
@@ -67,13 +67,13 @@ pub(crate) async fn forward_general_message(text: String, uri: &str, general_tx:
 pub async fn manage_connection(uri: String, general_tx: broadcast::Sender<MyMessage>) {
     let mut retry_delay = 1;
     let mut rng = rand::rngs::StdRng::from_entropy();
-    debug!("Starting connection management for {}", uri);
+    info!("Starting connection management for {}", uri);
 
     loop {
-        debug!("Attempting to connect to {}", uri);
+        info!("Attempting to connect to {}", uri);
         match connect_async(&uri).await {
             Ok((ws_stream, _)) => {
-                debug!("Successfully connected to {}", uri);
+                info!("Successfully connected to {}", uri);
                 retry_delay = 1; // Reset retry delay after successful connection
 
                 let (mut write, read) = ws_stream.split();
@@ -84,14 +84,14 @@ pub async fn manage_connection(uri: String, general_tx: broadcast::Sender<MyMess
                 let (subscribe_request_tx, mut subscribe_request_rx) =
                     mpsc::channel::<MyMessage>(32);
                 let (subscribe_response_tx, subscribe_response_rx) = mpsc::channel::<MyMessage>(32);
-                debug!("Channels created");
+                info!("Channels created");
 
                 let uri_clone = uri.clone();
                 let pong_tx_clone = pong_tx.clone();
                 let subscribe_response_tx_clone = subscribe_response_tx.clone();
                 let general_tx_clone = general_tx.clone();
 
-                debug!("Spawning task to handle WebSocket stream");
+                info!("Spawning task to handle WebSocket stream");
                 let handle_task = spawn(async move {
                     handle_websocket_stream(
                         read,
@@ -103,7 +103,7 @@ pub async fn manage_connection(uri: String, general_tx: broadcast::Sender<MyMess
                     .await;
                 });
 
-                debug!("Spawning task to write messages");
+                info!("Spawning task to write messages");
                 let _write_task = spawn(async move {
                     loop {
                         select! {
@@ -132,13 +132,13 @@ pub async fn manage_connection(uri: String, general_tx: broadcast::Sender<MyMess
                 });
 
                 let uri_for_ping_task = uri.clone();
-                debug!("Spawning pinging task for {}", uri_for_ping_task);
+                info!("Spawning pinging task for {}", uri_for_ping_task);
                 let _ping_task = spawn(async move {
                     start_pinging(ping_tx, pong_rx, uri_for_ping_task).await;
                 });
 
                 let uri_for_subscribe_task = uri.clone();
-                debug!("Spawning subscription task for {}", uri_for_subscribe_task);
+                info!("Spawning subscription task for {}", uri_for_subscribe_task);
                 let _subscription_task = spawn(async move {
                     let _ = start_subscribing(
                         subscribe_request_tx,
@@ -162,7 +162,7 @@ pub async fn manage_connection(uri: String, general_tx: broadcast::Sender<MyMess
 
         let jitter = rng.gen_range(0..6);
         let sleep_time = std::cmp::min(retry_delay, 1024) + jitter;
-        debug!(
+        info!(
             "Waiting {} seconds before retrying connection to {}",
             sleep_time, uri
         );
@@ -192,6 +192,12 @@ pub async fn websocket_manager(base_url: &str, endpoints: &[String]) {
     let conn = establish_connection();
     spawn(async move {
         write_to_database::insert_into_db(general_rx2, conn).await;
+    });
+
+    // Spawn the listener task with its own receiver clone
+    let general_rx3 = general_rx.resubscribe();
+    spawn(async move {
+        message_processor::process_messages(general_rx3).await;
     });
 
     // Main loop to manage connections

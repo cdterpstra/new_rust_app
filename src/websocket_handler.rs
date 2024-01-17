@@ -1,7 +1,7 @@
 use crate::websocket_manager::{forward_general_message, MyMessage, PongMessage, SubscribeMessage};
 use futures_util::stream::SplitStream;
 use futures_util::StreamExt;
-use log::{debug, error};
+use log::{debug, error, info};
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
@@ -60,7 +60,7 @@ async fn handle_pong_message(
 ) -> Result<(), String> {
     let parsed_msg: PongMessage =
         serde_json::from_str(&text).expect("Failed to parse message as PongMessage");
-    debug!("Parsed message as PongMessage: {:?}", parsed_msg);
+    info!("Parsed message as PongMessage: {:?}", parsed_msg);
 
     let my_msg = create_my_message(text, uri);
     pong_tx

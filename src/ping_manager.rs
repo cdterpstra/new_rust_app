@@ -11,7 +11,7 @@ use crate::websocket_manager::MyMessage;
 use colored::Colorize;
 
 pub async fn start_pinging(write_ping: mpsc::Sender<MyMessage>, mut read_pong: mpsc::Receiver<MyMessage>, uri: String) {
-    info!("Starting pinging task for uri: {}", uri);
+    debug!("Starting pinging task for uri: {}", uri);
 
     let mut interval = time::interval(Duration::from_secs(15));
 
@@ -42,7 +42,7 @@ pub async fn start_pinging(write_ping: mpsc::Sender<MyMessage>, mut read_pong: m
 
         // Sending the message
         match write_ping.send(my_ping_message).await {
-            Ok(_) => debug!("Ping message sent successfully for uri: {}", uri),
+            Ok(_) => info!("Ping message sent successfully for uri: {}", uri),
             Err(e) => {
                 error!("Failed to send ping for uri {}: {:?}", uri, e);
                 break; // Exiting loop on send failure
@@ -51,7 +51,7 @@ pub async fn start_pinging(write_ping: mpsc::Sender<MyMessage>, mut read_pong: m
 
         // Verifying the pong response
         match verify_pong(&mut read_pong, &req_id).await {
-            Ok(_) => debug!("Successfully verified pong response for uri: {}", uri),
+            Ok(_) => info!("Successfully verified pong response for uri: {}", uri),
             Err(e) => {
                 error!("Failed to verify pong for uri {}: {:?}", uri, e);
                 break;
@@ -127,6 +127,11 @@ fn handle_spot_inverse_linear(data: &Value, expected_req_id: &str) -> Result<(),
         .ok_or_else(|| "Missing or invalid 'success'".to_string())?;
 
     if ret_msg == "pong" && req_id == expected_req_id && success {
+        if let Some(args) = data["args"].as_array() {
+            if let Some(timestamp_str) = args.first().and_then(|v| v.as_str()) {
+                return check_pong_timestamp(timestamp_str, data);
+            }
+        }
         debug!("{} {}", "Pong success from Spot, Inverse, or Linear endpoint:".green(), data.to_string().green());
         Ok(())
     } else {
@@ -134,7 +139,7 @@ fn handle_spot_inverse_linear(data: &Value, expected_req_id: &str) -> Result<(),
     }
 }
 
-// Handle Private or Option endpoint pongs
+    // Handle Private or Option endpoint pongs
 fn handle_pong(data: &Value, expected_req_id: &str) -> Result<(), String> {
     if data.get("req_id").map_or(false, |r| r == expected_req_id) {
         // Handling Private endpoint pong message
@@ -176,7 +181,7 @@ fn check_pong_timestamp(timestamp_str: &str, data: &Value) -> Result<(), String>
         ).map(|naive| Utc.from_utc_datetime(&naive)) {
             let current_time = Utc::now();
             let duration_since_pong = current_time - pong_time;
-            debug!("Time difference: Current Time: {} - Pong Time: {} = Duration (ms): {}", current_time, pong_time, duration_since_pong.num_milliseconds());
+            info!("Time difference: Current Time: {} - Pong Time: {} = Duration (ms): {}", current_time, pong_time, duration_since_pong.num_milliseconds());
 
             if duration_since_pong <= chrono::Duration::milliseconds(200) {
                 debug!("{} {}", "Pong message is timely and within 200ms:".green(), data.to_string().green());

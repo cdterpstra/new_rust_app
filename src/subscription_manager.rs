@@ -5,7 +5,7 @@ use std::error::Error;
 use colored::Colorize;
 use config::{Config, File};
 use crate::websocket_manager::MyMessage;
-use log::{debug, error, info};
+use log::{debug, error, info, trace, warn};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -49,7 +49,7 @@ pub async fn start_subscribing(
         };
 
         // Send the authentication message
-        debug!("Sending auth message for uri: {}", uri.blue());
+        info!("Sending auth message for uri: {}", uri.blue());
         if let Err(e) = subscription_request_write.send(my_auth_message).await {
             error!("Failed to send auth message for uri {}: {:?}", uri, e);
             return Err(Box::new(e)); // Exiting function on send failure
@@ -116,7 +116,7 @@ pub async fn start_subscribing(
 
         // Verifying the subscription response for each chunk
         match verify_subscription(&mut subscription_response_read, &req_id, &uri).await {
-            Ok(_) => debug!(
+            Ok(_) => info!(
                 "Successfully verified subscription response for chunk in uri: {}",
                 uri.green()
             ),
@@ -146,14 +146,14 @@ async fn verify_subscription(
     // Set a 2-second timeout for receiving messages
     if let Ok(Some(subscription_response)) = timeout(core::time::Duration::from_secs(2), subscription_response_receiver.recv()).await {
         if let Message::Text(text) = subscription_response.message {
-            debug!("Attempting to verify message: {}", text); // Additional log
+            trace!("Attempting to verify message: {}", text); // Additional log
             match serde_json::from_str::<Value>(&text) {
                 Ok(json) => {
                     // Additional diagnostics:
                     debug!("Received JSON for verification: req_id: {}, op: {}", json["req_id"], json["op"]);
 
                     if json["req_id"] == req_id && json["op"] == "subscribe" && json["success"] == true {
-                        info!(
+                        debug!(
                             "Valid subscription received for endpoint '{}' with req_id: {}",
                             uri, req_id
                         );
@@ -161,7 +161,7 @@ async fn verify_subscription(
 
                     } else {
                         // Log why it's continuing, if the message isn't a match
-                        debug!("Continuing verification: Message didn't match the expected subscription confirmation.");
+                        warn!("Continuing verification: Message didn't match the expected subscription confirmation.");
                     }
                 }
                 Err(e) => {

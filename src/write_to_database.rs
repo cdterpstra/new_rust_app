@@ -4,11 +4,11 @@ use crate::websocket_manager::MyMessage;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use diesel::prelude::*;
-use log::info;
+use log::{error, info, trace};
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::from_str;
+use serde_json::{from_str, Value};
 use std::str::FromStr;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tungstenite::Message as WebSocketMessage;
 
 fn deserialize_optional_string_timestamp<'de, D>(
@@ -141,61 +141,62 @@ pub async fn insert_message_into_db(
         receivedat: received_at_time,
     };
 
-    println!("New message to insert: {:?}", new_message);
+    trace!("New message to insert: {:?}", new_message);
 
     // Use Diesel's insert_into and execute to insert the new record
     match diesel::insert_into(tickers::table)
         .values(&new_message)
         .execute(conn)
     {
-        Ok(_) => println!("Insertion successful"),
-        Err(e) => eprintln!("Error inserting data: {:?}", e),
+        Ok(_) => trace!("Insertion successful"),
+        Err(e) => error!("Error inserting data: {:?}", e),
     }
 
-    println!("Inserted message: {:?}", message);
+    trace!("Inserted message: {:?}", message);
 
     Ok(())
 }
 
 pub async fn insert_into_db(mut receiver: broadcast::Receiver<MyMessage>, pool: PgPool) {
     while let Ok(my_msg) = receiver.recv().await {
-        // Handle only text messages
-        info!(
+        trace!(
             "Received Message with timestamp {} from {}: {:?}",
             my_msg.receivedat, my_msg.endpoint_name, my_msg.message
         );
 
         if let WebSocketMessage::Text(ref text) = my_msg.message {
-            // Now `text` contains your JSON string
+            match serde_json::from_str::<Value>(text) {
+                Ok(json_value) => {
+                    if let Some(topic) = json_value["topic"].as_str() {
+                        if topic.starts_with("tickers") {
+                            trace!("Topic starts with 'tickers', processing message.");
 
-            // Deserialize the JSON string to MessageData (defined in previous messages)
-            match from_str::<MessageData>(text) {
-                Ok(parsed_message) => {
-                    // Check if the topic starts with "tickers"
-                    if parsed_message.topic.starts_with("tickers") {
-                        println!("Received: {:?}", parsed_message.clone());
-
-                        // Obtain a connection from the pool and get a mutable reference
-                        let mut conn = pool
-                            .get()
-                            .expect("Failed to get database connection from pool");
-
-                        // Call async function to insert the message with the connection
-                        let _ = insert_message_into_db(
-                            my_msg.receivedat,
-                            my_msg.endpoint_name,
-                            parsed_message.clone(),
-                            &mut conn,
-                        )
-                        .await; // Pass &mut conn here
-                        println!("Passed to insert: {:?}", parsed_message.clone());
+                            // Nu we weten dat het topic met "tickers" begint, zetten we om naar MessageData
+                            if let Ok(parsed_message) = from_str::<MessageData>(text) {
+                                // Verwerk parsed_message
+                                let mut conn = pool.get().expect("Failed to get database connection from pool");
+                                let _ = insert_message_into_db(
+                                    my_msg.receivedat,
+                                    my_msg.endpoint_name,
+                                    parsed_message.clone(),
+                                    &mut conn,
+                                ).await;
+                                trace!("Passed to insert: {:?}", parsed_message.clone());
+                            } else {
+                                error!("Failed to parse into MessageData structure");
+                            }
+                        } else {
+                            info!("Received message with a different topic: {}", topic);
+                        }
+                    } else {
+                        error!("JSON does not contain 'topic' field");
                     }
                 }
                 Err(e) => {
-                    // Handle JSON parsing error
-                    eprintln!("Error parsing message JSON: {:?}", e);
+                    error!("Error parsing message JSON: {:?}", e);
                 }
             }
         }
     }
 }
+

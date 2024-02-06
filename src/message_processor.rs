@@ -49,12 +49,12 @@ pub struct AggregatedTradeData {
 
 
 
-async fn analyze_trading_pair(trading_symbol: String, msg: MyMessage) {
+async fn analyze_trading_pair(trading_symbol: String, msg: VecDeque<AggregatedTradeData>) {
     println!("Analyzing: {:?} for symbol: {}", msg, trading_symbol);
     // Rekenintensieve logica...
 }
 
-const MAX_QUEUE_SIZE: usize = 60000;
+const MAX_QUEUE_SIZE: usize = 4;
 
 pub async fn process_messages(mut receiver: broadcast::Receiver<MyMessage>) {
     let active_symbols = Arc::new(Mutex::new(HashMap::<String, bool>::new()));
@@ -167,22 +167,27 @@ pub async fn process_messages(mut receiver: broadcast::Receiver<MyMessage>) {
                                         };
 
                                         if !already_active {
-                                            let my_msg_clone = my_msg.clone();
+                                            // let my_msg_clone = my_msg.clone();
                                             let active_symbols_clone = active_symbols.clone();
+
+                                            let aggregated_data = {
+                                                let queues = symbol_queues.lock().unwrap();
+                                                queues.get(&symbol_name).cloned().unwrap_or_default()
+                                            };
 
                                             debug!("Starting analysis for symbol: {}", symbol_name);
                                             pool.execute(move || {
                                                 let rt = tokio::runtime::Runtime::new().unwrap();
-                                                rt.block_on(analyze_trading_pair(symbol_name.clone(), my_msg_clone)); // Gebruik de gekloonde symbol_name
+                                                rt.block_on(analyze_trading_pair(symbol_name.clone(), aggregated_data)); // Gebruik de gekloonde symbol_name en de verzamelde data
 
                                                 let mut active_symbols = active_symbols_clone.lock().unwrap();
                                                 active_symbols.remove(&symbol_name);
                                                 debug!("Analysis complete, symbol deactivated: {}", symbol_name);
                                             });
                                         } else {
-                                            // Optioneel: voeg logica toe voor het geval het symbool al actief is
                                             debug!("Skipping analysis for already active symbol: {}", symbol_name);
                                         }
+
                                     }
                                 }
                             }

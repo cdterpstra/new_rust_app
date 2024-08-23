@@ -4,12 +4,16 @@ use crate::websocket_manager::MyMessage;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use diesel::prelude::*;
-use log::{error, info, trace};
+use log::{debug, error, trace};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{from_str, Value};
-use std::str::FromStr;
 use tokio::sync::broadcast;
+use tokio::time::{interval, Duration};
 use tungstenite::Message as WebSocketMessage;
+use std::str::FromStr;
+use colored::Colorize;
+use diesel::debug_query;
+use diesel::pg::Pg;
 
 fn deserialize_optional_string_timestamp<'de, D>(
     deserializer: D,
@@ -20,18 +24,18 @@ where
     let option = Option::<String>::deserialize(deserializer)?;
     match option {
         Some(s) => {
-            let millis = i64::from_str(&s).map_err(serde::de::Error::custom)?;
-            match Utc.timestamp_millis_opt(millis) {
-                chrono::LocalResult::Single(timestamp) => Ok(Some(timestamp)),
-                _ => Err(serde::de::Error::custom("Invalid timestamp")),
-            }
+            let micros = i64::from_str(&s).map_err(serde::de::Error::custom)?;
+            let naive_datetime = NaiveDateTime::from_timestamp_micros(micros / 1000)
+                .ok_or_else(|| serde::de::Error::custom("Invalid timestamp"))?;
+            Ok(Some(Utc.from_utc_datetime(&naive_datetime)))
         }
         None => Ok(None),
     }
 }
 
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct MessageData {
+pub(crate) struct MessageData {
     pub topic: String,
     #[serde(rename = "type")]
     pub datatype: String,
@@ -98,105 +102,115 @@ struct NewMessage {
     receivedat: NaiveDateTime,
 }
 
-pub async fn insert_message_into_db(
-    other_receivedat: i64,
-    endpoint_name: String,
-    message: MessageData,
-    conn: &mut PgConnection, // Change the reference to mutable
+async fn insert_messages_into_db(
+    new_messages: Vec<NewMessage>,
+    conn: &mut PgConnection,
 ) -> Result<(), diesel::result::Error> {
-    let message_clone = message.clone();
-
-    let seconds = other_receivedat / 1_000_000_000;
-    let nanoseconds = (other_receivedat % 1_000_000_000) as u32;
-    let received_at_time =
-        NaiveDateTime::from_timestamp_opt(seconds, nanoseconds).expect("Invalid timestamp");
-
-    // Create a NewMessage struct with the data you want to insert
-    let new_message = NewMessage {
-        // topic: message_clone.topic,
-        datatype: message_clone.datatype,
-        symbol: message_clone.data.symbol,
-        tickdirection: message_clone.data.tickDirection,
-        price24hpcnt: message_clone.data.price24hPcnt,
-        lastprice: message_clone.data.lastPrice,
-        prevprice24h: message_clone.data.prevPrice24h,
-        highprice24h: message_clone.data.highPrice24h,
-        lowprice24h: message_clone.data.lowPrice24h,
-        prevprice1h: message_clone.data.prevPrice1h,
-        markprice: message_clone.data.markPrice,
-        indexprice: message_clone.data.indexPrice,
-        openinterest: message_clone.data.openInterest,
-        openinterestvalue: message_clone.data.openInterestValue,
-        turnover24h: message_clone.data.turnover24h,
-        volume24h: message_clone.data.volume24h,
-        nextfundingtime: message_clone.data.nextFundingTime.map(|dt| dt.naive_utc()),
-        fundingrate: message_clone.data.fundingRate,
-        bid1price: message_clone.data.bid1Price,
-        bid1size: message_clone.data.bid1Size,
-        ask1price: message_clone.data.ask1Price,
-        ask1size: message_clone.data.ask1Size,
-        cs: Some(message_clone.cs),
-        ts: Some(message_clone.ts.naive_utc()),
-        endpoint: Some(endpoint_name),
-        receivedat: received_at_time,
-    };
-
-    trace!("New message to insert: {:?}", new_message);
-
-    // Use Diesel's insert_into and execute to insert the new record
-    match diesel::insert_into(tickers::table)
-        .values(&new_message)
-        .execute(conn)
-    {
-        Ok(_) => trace!("Insertion successful"),
-        Err(e) => error!("Error inserting data: {:?}", e),
+    if new_messages.is_empty() {
+        return Ok(());
     }
 
-    trace!("Inserted message: {:?}", message);
+    trace!("Inserting {} messages into the database", new_messages.len());
+
+    // Maak de insert statement
+    let insert_statement = diesel::insert_into(tickers::table).values(&new_messages);
+
+    // Print de debug versie van de SQL-query
+    trace!("SQL: {}", debug_query::<Pg, _>(&insert_statement).to_string());
+
+    // Voer de insert statement uit
+    match insert_statement.execute(conn) {
+        Ok(_) => trace!("Batch insertion successful"),
+        Err(e) => error!("{} {}", "Error inserting batch:".red(), e.to_string().red()),
+    }
 
     Ok(())
 }
 
 pub async fn insert_into_db(mut receiver: broadcast::Receiver<MyMessage>, pool: PgPool) {
-    while let Ok(my_msg) = receiver.recv().await {
-        trace!(
-            "Received Message with timestamp {} from {}: {:?}",
-            my_msg.receivedat, my_msg.endpoint_name, my_msg.message
-        );
+    let mut buffer = Vec::new();
+    let mut interval = interval(Duration::from_millis(100 ));
 
-        if let WebSocketMessage::Text(ref text) = my_msg.message {
-            match serde_json::from_str::<Value>(text) {
-                Ok(json_value) => {
-                    if let Some(topic) = json_value["topic"].as_str() {
-                        if topic.starts_with("tickers") {
-                            trace!("Topic starts with 'tickers', processing message.");
-
-                            // Nu we weten dat het topic met "tickers" begint, zetten we om naar MessageData
-                            if let Ok(parsed_message) = from_str::<MessageData>(text) {
-                                // Verwerk parsed_message
-                                let mut conn = pool.get().expect("Failed to get database connection from pool");
-                                let _ = insert_message_into_db(
-                                    my_msg.receivedat,
-                                    my_msg.endpoint_name,
-                                    parsed_message.clone(),
-                                    &mut conn,
-                                ).await;
-                                trace!("Passed to insert: {:?}", parsed_message.clone());
-                            } else {
-                                error!("Failed to parse into MessageData structure");
-                            }
-                        } else {
-                            trace!("Received message with a different topic: {}", topic);
-                        }
-                    } else {
-                        error!("JSON does not contain 'topic' field");
-                    }
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                if !buffer.is_empty() {
+                    let mut conn = pool.get().expect("Failed to get database connection from pool");
+                    let _ = insert_messages_into_db(buffer.drain(..).collect(), &mut conn).await;
                 }
-                Err(e) => {
-                    error!("Error parsing message JSON: {:?}", e);
+            }
+            msg = receiver.recv() => {
+                match msg {
+                    Ok(my_msg) => {
+                        trace!(
+                            "Received Message with timestamp {} from {}: {:?}",
+                            my_msg.receivedat, my_msg.endpoint_name, my_msg.message
+                        );
+
+                        if let WebSocketMessage::Text(ref text) = my_msg.message {
+                            match serde_json::from_str::<Value>(text) {
+                                Ok(json_value) => {
+                                    if let Some(topic) = json_value["topic"].as_str() {
+                                        if topic.starts_with("tickers") {
+                                            debug!("Topic starts with 'tickers', processing message.");
+
+                                            if let Ok(parsed_message) = from_str::<MessageData>(text) {
+                                                let received_at_time = NaiveDateTime::from_timestamp_micros(my_msg.receivedat)
+                                                    .expect("Invalid timestamp");
+                                                let new_message = NewMessage {
+                                                    datatype: parsed_message.datatype,
+                                                    symbol: parsed_message.data.symbol,
+                                                    tickdirection: parsed_message.data.tickDirection,
+                                                    price24hpcnt: parsed_message.data.price24hPcnt,
+                                                    lastprice: parsed_message.data.lastPrice,
+                                                    prevprice24h: parsed_message.data.prevPrice24h,
+                                                    highprice24h: parsed_message.data.highPrice24h,
+                                                    lowprice24h: parsed_message.data.lowPrice24h,
+                                                    prevprice1h: parsed_message.data.prevPrice1h,
+                                                    markprice: parsed_message.data.markPrice,
+                                                    indexprice: parsed_message.data.indexPrice,
+                                                    openinterest: parsed_message.data.openInterest,
+                                                    openinterestvalue: parsed_message.data.openInterestValue,
+                                                    turnover24h: parsed_message.data.turnover24h,
+                                                    volume24h: parsed_message.data.volume24h,
+                                                    nextfundingtime: parsed_message.data.nextFundingTime.map(|dt| dt.naive_utc()),
+                                                    fundingrate: parsed_message.data.fundingRate,
+                                                    bid1price: parsed_message.data.bid1Price,
+                                                    bid1size: parsed_message.data.bid1Size,
+                                                    ask1price: parsed_message.data.ask1Price,
+                                                    ask1size: parsed_message.data.ask1Size,
+                                                    cs: Some(parsed_message.cs),
+                                                    ts: Some(parsed_message.ts.naive_utc()),
+                                                    endpoint: Some(my_msg.endpoint_name.clone()),
+                                                    receivedat: received_at_time,
+                                                };
+
+                                                buffer.push(new_message);
+                                            } else {
+                                                error!("Failed to parse into MessageData structure");
+                                            }
+                                        } else {
+                                            trace!("Received message with a different topic: {}", topic);
+                                        }
+                                    } else {
+                                        error!("JSON does not contain 'topic' field");
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Error parsing message JSON: {:?}", e);
+                                }
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(number)) => {
+                        debug!("{} {} {}", "Missed".red(), number.to_string().red(), "messages due to lagging receiver".red());
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        debug!("Broadcast channel closed");
+                        break;
+                    }
                 }
             }
         }
     }
 }
-

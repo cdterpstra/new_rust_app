@@ -6,10 +6,10 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.35.1", features = ["sync", "rt", "rt-multi-thread", "macros", "signal", "time", "test-util"] }
-tokio-tungstenite = { version = "0.21.0" , features = ["native-tls"]}
+tokio-tungstenite = { version = "0.23.1", features = ["native-tls"]}
 futures-util = { version = "0.3.30", features = ["sink"] }
 uuid = { version = "1.6.1", features = ["v4"] }
-env_logger = "0.10.1"
+env_logger = "0.11.5"
 log = "0.4.20"
 time = "0.3.31"
 rand = "0.8.5"
@@ -19,14 +19,14 @@ chrono = { version = "0.4.31", features = ["serde"] }
 colored = "2.0"
 crossbeam-channel = "0.5.11"
 serde = { version = "1.0.195", features = ["derive"] }
-mockall = "0.12.1"
+mockall = "0.13.0"
 async-trait = "0.1.77"
 test-log = "0.2.14"
-config = "0.13.4"
+config = "0.14.0"
 url = "2.5.0"
 openssl = "0.10.61"
-base64 = "0.21.5"
-tungstenite = "0.21.0"
+base64 = "0.22.1"
+tungstenite = "0.23.0"
 diesel = { version = "2.1.4", features = ["postgres", "r2d2", "numeric", "chrono"] }
 dotenv = "0.15.0"
 bigdecimal = {version = "0.4.2", features = ["serde"]}

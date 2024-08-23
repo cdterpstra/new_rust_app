@@ -1,5 +1,6 @@
 [print_schema]
 file = "src/schema.rs"
+schema = "crypto"
 
 [migrations_directory]
 dir = "diesel_migrations"

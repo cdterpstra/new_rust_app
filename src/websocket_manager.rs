@@ -42,27 +42,38 @@ pub(crate) struct SubscribeMessage {
     op: String,
 }
 
-
-
 pub(crate) async fn forward_general_message(text: String, uri: &str, general_tx: &broadcast::Sender<MyMessage>) {
-    let timestamp: i64 = match chrono::Utc::now().timestamp_nanos_opt() {
+    let timestamp_nanos: i64 = match chrono::Utc::now().timestamp_nanos_opt() {
         Some(nanos) => nanos,
         None => {
-            // Handle the error appropriately, such as logging or panicking
-            panic!("Unable to obtain timestamp in nanoseconds.");
+            // Als er geen geldige timestamp kan worden verkregen, log dit en return
+            error!("Unable to obtain a valid timestamp.");
+            return;
         }
     };
+
+    let timestamp_micros = timestamp_nanos / 1_000; // Omzetten van nanoseconden naar microseconden
+
     let my_msg = MyMessage {
-        receivedat: timestamp as i64,
+        receivedat: timestamp_micros,  // Microseconds since Unix Epoch
         endpoint_name: uri.to_string(),
         message: Message::Text(text), // Repackaging text as Message
     };
     trace!("Forwarding general message: {:?}", my_msg);
 
-    if let Err(e) = general_tx.send(my_msg) {
-        error!("Error forwarding to general handler: {:?}", e);
+    match general_tx.send(my_msg) {
+        Ok(_) => {
+            let queue_len = general_tx.len();
+            trace!("{} {}", "Current number of messages in the queue:", queue_len.to_string().green());
+        }
+        Err(broadcast::error::SendError(_)) => {
+            let queue_len = general_tx.len();
+            info!("{} {}", "Queue is lagging! Current number of messages in the queue:".red(), queue_len.to_string().red());
+        }
     }
 }
+
+
 
 pub async fn manage_connection(uri: String, general_tx: broadcast::Sender<MyMessage>) {
     let mut retry_delay = 1;
@@ -175,7 +186,7 @@ pub async fn websocket_manager(base_url: &str, endpoints: &[String]) {
     debug!("Initializing WebSocket manager");
 
     // Create a channel for general messages
-    let (general_tx, general_rx) = broadcast::channel::<MyMessage>(32);
+    let (general_tx, general_rx) = broadcast::channel::<MyMessage>(16);
 
     // Shared state to manage connections
     let connections = Arc::new(Mutex::new(Vec::new()));

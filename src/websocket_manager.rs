@@ -68,7 +68,7 @@ pub(crate) async fn forward_general_message(text: String, uri: &str, general_tx:
         }
         Err(broadcast::error::SendError(_)) => {
             let queue_len = general_tx.len();
-            info!("{} {}", "Queue is lagging! Current number of messages in the queue:".red(), queue_len.to_string().red());
+            error!("{} {}", "Queue is lagging! Current number of messages in the queue:".red(), queue_len.to_string().red());
         }
     }
 }
@@ -186,7 +186,7 @@ pub async fn websocket_manager(base_url: &str, endpoints: &[String]) {
     debug!("Initializing WebSocket manager");
 
     // Create a channel for general messages
-    let (general_tx, general_rx) = broadcast::channel::<MyMessage>(16);
+    let (general_tx, general_rx) = broadcast::channel::<MyMessage>(128000);
 
     // Shared state to manage connections
     let connections = Arc::new(Mutex::new(Vec::new()));

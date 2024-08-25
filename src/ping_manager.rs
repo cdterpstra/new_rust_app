@@ -11,7 +11,7 @@ use crate::websocket_manager::MyMessage;
 use colored::Colorize;
 
 pub async fn start_pinging(write_ping: mpsc::Sender<MyMessage>, mut read_pong: mpsc::Receiver<MyMessage>, uri: String) {
-    debug!("Starting pinging task for uri: {}", uri);
+    trace!("Starting pinging task for uri: {}", uri);
 
     let mut interval = time::interval(Duration::from_secs(15));
 
@@ -19,7 +19,7 @@ pub async fn start_pinging(write_ping: mpsc::Sender<MyMessage>, mut read_pong: m
         interval.tick().await; // Wait for the next interval tick
 
         let req_id = Uuid::new_v4().to_string();
-        debug!("Generated req_id {} for next ping message", req_id);
+        trace!("Generated req_id {} for next ping message", req_id);
 
         let ping_message = json!({
             "op": "ping",
@@ -28,7 +28,7 @@ pub async fn start_pinging(write_ping: mpsc::Sender<MyMessage>, mut read_pong: m
         })
             .to_string();
 
-        debug!("Constructed ping message: {}", ping_message);
+        trace!("Constructed ping message: {}", ping_message);
 
         // Constructing a text WebSocket message
         let ping_ws_message = Message::Text(ping_message);
@@ -42,7 +42,7 @@ pub async fn start_pinging(write_ping: mpsc::Sender<MyMessage>, mut read_pong: m
 
         // Sending the message
         match write_ping.send(my_ping_message).await {
-            Ok(_) => info!("Ping message sent successfully for uri: {}", uri),
+            Ok(_) => trace!("Ping message sent successfully for uri: {}", uri),
             Err(e) => {
                 error!("Failed to send ping for uri {}: {:?}", uri, e);
                 break; // Exiting loop on send failure
@@ -51,7 +51,7 @@ pub async fn start_pinging(write_ping: mpsc::Sender<MyMessage>, mut read_pong: m
 
         // Verifying the pong response
         match verify_pong(&mut read_pong, &req_id).await {
-            Ok(_) => info!("Successfully verified pong response for uri: {}", uri),
+            Ok(_) => trace!("Successfully verified pong response for uri: {}", uri),
             Err(e) => {
                 error!("Failed to verify pong for uri {}: {:?}", uri, e);
                 break;
@@ -60,7 +60,7 @@ pub async fn start_pinging(write_ping: mpsc::Sender<MyMessage>, mut read_pong: m
         }
     }
 
-    info!("Pinging task ended for uri: {}", uri);
+    trace!("Pinging task ended for uri: {}", uri);
 }
 
 /// Verify pong response from the server to ensure connection health
@@ -132,7 +132,7 @@ fn handle_spot_inverse_linear(data: &Value, expected_req_id: &str) -> Result<(),
                 return check_pong_timestamp(timestamp_str, data);
             }
         }
-        debug!("{} {}", "Pong success from Spot, Inverse, or Linear endpoint:".green(), data.to_string().green());
+        trace!("{} {}", "Pong success from Spot, Inverse, or Linear endpoint:".green(), data.to_string().green());
         Ok(())
     } else {
         Err("Unexpected message format for Spot/Inverse/Linear".to_string())
@@ -181,10 +181,10 @@ fn check_pong_timestamp(timestamp_str: &str, data: &Value) -> Result<(), String>
         ).map(|naive| Utc.from_utc_datetime(&naive)) {
             let current_time = Utc::now();
             let duration_since_pong = current_time - pong_time;
-            info!("Time difference: Current Time: {} - Pong Time: {} = Duration (ms): {}", current_time, pong_time, duration_since_pong.num_milliseconds());
+            trace!("Time difference: Current Time: {} - Pong Time: {} = Duration (ms): {}", current_time, pong_time, duration_since_pong.num_milliseconds());
 
             if duration_since_pong <= chrono::Duration::milliseconds(200) {
-                debug!("{} {}", "Pong message is timely and within 200ms:".green(), data.to_string().green());
+                trace!("{} {}", "Pong message is timely and within 200ms:".green(), data.to_string().green());
                 Ok(())
             } else {
                 error!("Pong message is too old. Connection might be unhealthy.");

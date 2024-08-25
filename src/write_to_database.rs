@@ -4,7 +4,7 @@ use crate::websocket_manager::MyMessage;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use diesel::prelude::*;
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{from_str, Value};
 use tokio::sync::broadcast;
@@ -110,7 +110,7 @@ async fn insert_messages_into_db(
         return Ok(());
     }
 
-    trace!("Inserting {} messages into the database", new_messages.len());
+    info!("Inserting {} messages into the database", new_messages.len());
 
     // Maak de insert statement
     let insert_statement = diesel::insert_into(tickers::table).values(&new_messages);
@@ -152,7 +152,7 @@ pub async fn insert_into_db(mut receiver: broadcast::Receiver<MyMessage>, pool: 
                                 Ok(json_value) => {
                                     if let Some(topic) = json_value["topic"].as_str() {
                                         if topic.starts_with("tickers") {
-                                            debug!("Topic starts with 'tickers', processing message.");
+                                            trace!("Topic starts with 'tickers', processing message.");
 
                                             if let Ok(parsed_message) = from_str::<MessageData>(text) {
                                                 let received_at_time = NaiveDateTime::from_timestamp_micros(my_msg.receivedat)
@@ -203,10 +203,10 @@ pub async fn insert_into_db(mut receiver: broadcast::Receiver<MyMessage>, pool: 
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(number)) => {
-                        debug!("{} {} {}", "Missed".red(), number.to_string().red(), "messages due to lagging receiver".red());
+                        error!("{} {} {}", "Missed".red(), number.to_string().red(), "messages due to lagging receiver".red());
                     }
                     Err(broadcast::error::RecvError::Closed) => {
-                        debug!("Broadcast channel closed");
+                        error!("Broadcast channel closed");
                         break;
                     }
                 }

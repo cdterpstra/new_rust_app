@@ -1,206 +1,122 @@
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
-use log::debug;
+use std::sync::Arc;
+use log::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tokio::sync::{broadcast};
+use serde_json::{from_str, Value};
+use tokio::sync::broadcast;
 use crate::websocket_manager::MyMessage;
-use tungstenite::{Message as WebSocketMessage};
-use threadpool::ThreadPool;
-
+use tungstenite::Message as WebSocketMessage;
+use tokio::time::{self, Duration};
+use dashmap::DashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeData {
     #[serde(rename = "T")]
-    timestamp: i64,   // Timestamp van de trade
+    pub timestamp: i64,   // Timestamp van de trade
     #[serde(rename = "s")]
-    symbol: String,   // Symboolnaam
+    pub symbol: String,   // Symboolnaam
     #[serde(rename = "S")]
-    side: String,     // Side van de taker (Buy, Sell)
+    pub side: String,     // Side van de taker (Buy, Sell)
     #[serde(rename = "v")]
-    volume: String,   // Trade size als string
+    pub volume: String,   // Trade size als string
     #[serde(rename = "p")]
-    price: String,    // Trade price als string
-    #[serde(rename = "L")]
-    tick_direction: String, // Richting van prijsverandering
+    pub price: String,    // Trade price als string
+    #[serde(rename = "L", default)]
+    pub tick_direction: Option<String>, // Richting van prijsverandering (kan ontbreken)
     #[serde(rename = "i")]
-    trade_id: String, // Trade ID
+    pub trade_id: String, // Trade ID
     #[serde(rename = "BT")]
-    block_trade: bool, // Block trade order of niet
+    pub block_trade: bool, // Block trade order of niet
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AggregatedTradeData {
-    symbol: String,
-    timestamp: i64,
-    open_price: f64,
-    close_price: f64,
-    highest_price: f64,
-    lowest_price: f64,
-    average_price: f64,
-    total_trades: usize,
-    buy_volume: f64,
-    sell_volume: f64,
-    block_trade: bool,
+struct TradeMessage {
+    pub topic: String,
+    pub ts: i64,
+    pub r#type: String,
+    pub data: Vec<TradeData>,
 }
 
+pub async fn process_messages(
+    mut receiver: broadcast::Receiver<MyMessage>,
+) {
+    // Eerste buckets om trades tijdelijk op te slaan per symbool
+    let buckets: Arc<DashMap<String, Vec<TradeData>>> = Arc::new(DashMap::new());
 
+    // Tweede buckets voor verdere analyse per symbool
+    let analyze_buckets: Arc<DashMap<String, Vec<TradeData>>> = Arc::new(DashMap::new());
 
-
-
-async fn analyze_trading_pair(trading_symbol: String, msg: VecDeque<AggregatedTradeData>) {
-    println!("Analyzing: {:?} for symbol: {}", msg, trading_symbol);
-    // Rekenintensieve logica...
-}
-
-const MAX_QUEUE_SIZE: usize = 4;
-
-pub async fn process_messages(mut receiver: broadcast::Receiver<MyMessage>) {
-    let active_symbols = Arc::new(Mutex::new(HashMap::<String, bool>::new()));
-    let symbol_queues = Arc::new(Mutex::new(HashMap::<String, VecDeque<AggregatedTradeData>>::new()));
-    let pool = ThreadPool::new(4);
-    debug!("Starting message processing loop");
+    // Interval voor periodieke verwerking
+    let mut interval = time::interval(Duration::from_secs(1));
 
     loop {
-        match receiver.recv().await {
-            Ok(my_msg) => {
-                if let WebSocketMessage::Text(text) = &my_msg.message {
-                    debug!("Received text message: {}", text);
+        tokio::select! {
+            // Verplaats gegevens van de eerste naar de tweede bucket elke seconde
+            _ = interval.tick() => {
+                for mut entry in buckets.iter_mut() {
+                    let symbol = entry.key().clone();
+                    let trades = entry.value_mut();
 
-                    if let Ok(parsed_message) = serde_json::from_str::<Value>(text) {
-                        debug!("Parsed message successfully");
-                        if let Some(topic) = parsed_message["topic"].as_str() {
-                            if topic.starts_with("publicTrade") {
-                                if let Some(data) = parsed_message["data"].as_array() {
-                                    let mut aggregation_map = HashMap::new();
+                    let num_trades = trades.len(); // Aantal trades dat wordt verplaatst
+                    if num_trades > 0 {
+                        let mut analyze_bucket = analyze_buckets.entry(symbol.clone()).or_insert_with(Vec::new);
+                        analyze_bucket.extend(trades.drain(..)); // Verplaats alle data en leeg de eerste bucket
 
-                                    for entry in data {
-                                        match serde_json::from_value::<TradeData>(entry.clone()) {
-                                            Ok(trade) => {
-                                                let volume: f64 = trade.volume.parse().unwrap_or(0.0);
-                                                let price: f64 = trade.price.parse().unwrap_or(0.0);
+                        let total_in_analyze_bucket = analyze_bucket.len(); // Aantal trades in de analyze bucket na verplaatsing
 
-                                                let timestamp_sec = trade.timestamp / 1000;
-                                                let key = (trade.symbol.clone(), timestamp_sec);
+                        info!(
+                            "Moved {} trades for symbol {} to analyze bucket '{}'. Analyze bucket now contains {} trades.",
+                            num_trades, symbol, symbol, total_in_analyze_bucket
+                        );
+                    }
+                }
+            },
 
-                                                let agg_data = aggregation_map.entry(key.clone()).or_insert_with(|| AggregatedTradeData {
-                                                    symbol: trade.symbol.clone(),
-                                                    timestamp: timestamp_sec,
-                                                    open_price: price,
-                                                    close_price: price,
-                                                    highest_price: price,
-                                                    lowest_price: price,
-                                                    average_price: 0.0,
-                                                    total_trades: 0,
-                                                    buy_volume: 0.0,
-                                                    sell_volume: 0.0,
-                                                    block_trade: trade.block_trade,
-                                                });
+            // Ontvang en verwerk inkomende berichten
+            result = receiver.recv() => {
+                match result {
+                    Ok(my_msg) => {
+                        tokio::spawn({
+                            let buckets = Arc::clone(&buckets);
+                            async move {
+                                trace!(
+                                    "Received Message with timestamp {} from {}: {:?}",
+                                    my_msg.receivedat, my_msg.endpoint_name, my_msg.message
+                                );
 
-                                                if agg_data.total_trades == 0 {
-                                                    agg_data.open_price = price;
+                                if let WebSocketMessage::Text(ref text) = my_msg.message {
+                                    match from_str::<Value>(text) {
+                                        Ok(json_value) => {
+                                            if let Some(topic) = json_value["topic"].as_str() {
+                                                if topic.starts_with("publicTrade") {
+                                                    trace!("Topic is '{}', processing message.", topic);
+
+                                                    // Deserialiseer naar TradeMessage
+                                                    if let Ok(trade_message) = from_str::<TradeMessage>(text) {
+                                                        for trade_data in trade_message.data {
+                                                            trace!("Received trade data: {:?}", trade_data);
+
+                                                            // Voeg de trade data toe aan de juiste bucket voor het symbool
+                                                            buckets.entry(trade_data.symbol.clone()).or_insert_with(Vec::new).push(trade_data.clone());
+                                                        }
+                                                    } else {
+                                                        error!("Failed to deserialize trade data: {:?}", text);
+                                                    }
+                                                } else if topic.starts_with("tickers") {
+                                                    trace!("Topic starts with 'tickers', processing message.");
+                                                    // Hier kun je logica toevoegen om ticker berichten te verwerken
                                                 }
-
-                                                agg_data.close_price = price;
-                                                agg_data.highest_price = agg_data.highest_price.max(price);
-                                                agg_data.lowest_price = agg_data.lowest_price.min(price);
-                                                agg_data.total_trades += 1;
-                                                agg_data.average_price = ((agg_data.average_price * (agg_data.total_trades as f64 - 1.0)) + price) / agg_data.total_trades as f64;
-                                                agg_data.block_trade |= trade.block_trade;
-
-                                                if trade.side == "Buy" {
-                                                    agg_data.buy_volume += volume;
-                                                } else if trade.side == "Sell" {
-                                                    agg_data.sell_volume += volume;
-                                                }
-                                                debug!("Aggregated data for key {:?}: {:?}", key, agg_data);
-                                            },
-                                            Err(e) => {
-                                                debug!("Failed to deserialize trade: {:?}", e);
-                                            },
-                                        }
-                                    }
-
-                                    for (key, agg_data) in aggregation_map.iter() {
-                                        let symbol_name = key.0.clone();
-                                        let mut queues = symbol_queues.lock().unwrap();
-                                        let queue = queues.entry(symbol_name.clone()).or_insert_with(VecDeque::new);
-
-                                        let mut updated = false;
-                                        for existing_data in queue.iter_mut() {
-                                            if existing_data.timestamp == agg_data.timestamp {
-                                                debug!("Updating existing data for symbol: {}, timestamp: {}", symbol_name, existing_data.timestamp);
-                                                existing_data.buy_volume += agg_data.buy_volume;
-                                                existing_data.sell_volume += agg_data.sell_volume;
-                                                updated = true;
-                                                break;
                                             }
                                         }
-
-                                        if !updated {
-                                            debug!("Adding new data {:?} for symbol: {}, timestamp: {}", agg_data, symbol_name, agg_data.timestamp);
-                                            queue.push_back(agg_data.clone());
-                                        }
-
-                                        if queue.len() > MAX_QUEUE_SIZE {
-                                            debug!("Queue is full, popping front for symbol: {}", symbol_name);
-                                            queue.pop_front();
-                                        }
-                                        debug!("Queue size for symbol {}: {}", symbol_name, queue.len());
-                                    }
-
-
-                                    let symbol_names: Vec<String> = aggregation_map.keys().map(|k| k.0.clone()).collect();
-
-                                    for symbol_name in symbol_names {
-                                        let already_active = {
-                                            let mut active_symbols = active_symbols.lock().unwrap();
-                                            if !active_symbols.contains_key(&symbol_name) {
-                                                debug!("Activating symbol: {}", symbol_name);
-                                                active_symbols.insert(symbol_name.clone(), true);
-                                                false
-                                            } else {
-                                                debug!("Symbol already active: {}", symbol_name);
-                                                true
-                                            }
-                                        };
-
-                                        if !already_active {
-                                            // let my_msg_clone = my_msg.clone();
-                                            let active_symbols_clone = active_symbols.clone();
-
-                                            let aggregated_data = {
-                                                let queues = symbol_queues.lock().unwrap();
-                                                queues.get(&symbol_name).cloned().unwrap_or_default()
-                                            };
-
-                                            debug!("Starting analysis for symbol: {}", symbol_name);
-                                            pool.execute(move || {
-                                                let rt = tokio::runtime::Runtime::new().unwrap();
-                                                rt.block_on(analyze_trading_pair(symbol_name.clone(), aggregated_data)); // Gebruik de gekloonde symbol_name en de verzamelde data
-
-                                                let mut active_symbols = active_symbols_clone.lock().unwrap();
-                                                active_symbols.remove(&symbol_name);
-                                                debug!("Analysis complete, symbol deactivated: {}", symbol_name);
-                                            });
-                                        } else {
-                                            debug!("Skipping analysis for already active symbol: {}", symbol_name);
-                                        }
-
+                                        Err(e) => error!("Failed to parse message as JSON: {}", e),
                                     }
                                 }
                             }
-                        }
-                    } else {
-                        eprintln!("Failed to parse message as JSON");
+                        });
                     }
-                } else {
-                    eprintln!("Received a non-text WebSocket message");
+                    Err(e) => {
+                        error!("Failed to receive message: {:?}", e);
+                    }
                 }
-            },
-            Err(e) => {
-                eprintln!("Error receiving message: {}", e);
             }
         }
     }

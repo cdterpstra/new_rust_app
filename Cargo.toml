@@ -32,6 +32,9 @@ dotenv = "0.15.0"
 bigdecimal = {version = "0.4.2", features = ["serde"]}
 threadpool = "1.8.1"
 dashmap = "6.0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
+scc = "2.1.16"
+
 
 [profile.dev]
 opt-level = 0
